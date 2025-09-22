@@ -95,6 +95,8 @@ def main():
         sys.exit(1)
 
     timeout_length = args.timeout
+    if not timeout_length:
+        timeout_length = 30
 
     runTimeout(useWand, path, timeout=timeout_length)
     runTimeout(usePillow, path, timeout=timeout_length)
