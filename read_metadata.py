@@ -1,3 +1,6 @@
+#!/usr/bin/env python3
+# read_metadata.py
+
 import sys
 import os
 import datetime
@@ -16,9 +19,11 @@ def useWand(path):
             for key, value in img.metadata.items():
                 print(f"{key}: {value}")
         print("\n")
+
     except Exception as e:
         print("Error getting metadata with Wand:")
         print(f"{e}\n")
+
 
 def usePillow(path):
     try:
@@ -35,6 +40,7 @@ def usePillow(path):
                 data = data.decode()
             print(f"{tag:25}: {data}")
         print("\n")
+
     except Exception as e:
         print("Error getting metadata with Pillow:")
         print(f"{e}\n")
@@ -55,35 +61,43 @@ def useFFMPEG(path):
             print(f"{key}: {value}")
         
         print("\n")
+
     except Exception as e:
         print("Error getting metadata with ffmpeg:")
         print(f"{e}\n")
+
 
 def useWindows(path):
     try:
         ts = os.path.getmtime(path)
         dt = datetime.datetime.fromtimestamp(ts)
         print(f"Windows Modified Date: {dt}\n")
+
     except Exception as e:
         print("Error getting Windows Modified Date:")
         print(f"{e}\n")
+
 
 def runTimeout(func, path, timeout=30):
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
             future = executor.submit(func, path)
             future.result(timeout=timeout)
+
     except concurrent.futures.TimeoutError:
         print(f"Timeout: {func.__name__} took more than {timeout} seconds.\n")
+
 
 def parseArgs():
     parser = argparse.ArgumentParser(
         description="Read metadata using different methods: Wand, Pillow, FFMPEG and Windows (optionally)."
     )
     parser.add_argument("path", help="File path")
-    parser.add_argument("-w", "--windows", action="store_true", help="Use windows method.")
+    parser.add_argument("-w", "--windows", action="store_true", help="Use Windows method.")
     parser.add_argument("--timeout", type=int, default=30, help="Method timeout in seconds (default: 30).")
+
     return parser.parse_args()
+
 
 def main():
     args = parseArgs()
@@ -103,6 +117,7 @@ def main():
     runTimeout(useFFMPEG, path, timeout=timeout_length)
     if args.windows:
         runTimeout(useWindows, path, timeout=timeout_length)
+
 
 if __name__ == "__main__":
     main()

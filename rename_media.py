@@ -36,10 +36,11 @@ os.environ.setdefault("MAGICK_THREAD_LIMIT", "1")
 # Optional: cap ImageMagick resource usage (RAM / memory-mapped / disk spill)
 try:
     from wand import resource as wand_resource
-    # memory in bytes (e.g., 512MB), map 1GB, disk 2GB; ajustá si querés
+    # memory in bytes (e.g., 512MB), map 1GB, disk 2GB;
     wand_resource.limit(wand_resource.MEMORY, 4 * 1024 * 1024 * 1024)
     wand_resource.limit(wand_resource.MAP,    1 * 1024 * 1024 * 1024)
     wand_resource.limit(wand_resource.DISK,   2 * 1024 * 1024 * 1024)
+
 except Exception:
     pass
 
@@ -117,10 +118,11 @@ def parseArgs():
     parser.add_argument("-r", "--recursive", action="store_true", help="Process recursively (including subfolders).")
     parser.add_argument("-k", "--keep-structure", action="store_true", help="Keep 'src' subfolders inside 'dest' (use with -r).")
     parser.add_argument("-w", "--windows", action="store_true", help="Use Windows file times as a fallback.")
-    parser.add_argument("--timeout", type=int, default=60, help="Per-file timeout in seconds (default: 30).")
+    parser.add_argument("--timeout", type=int, default=30, help="Per-file timeout in seconds (default: 30).")
     parser.add_argument("--workers", type=int, default=0, help="Max threads. 0 = auto (default).")
     parser.add_argument("src", help="Source folder.")
     parser.add_argument("dest", help="Destination folder.")
+
     return parser.parse_args()
 
 
@@ -131,11 +133,14 @@ def parseArgs():
 def defaultWorkers():
     # IO-bound: many threads help; tune if needed.
     cpu = os.cpu_count() or 4
+
     return min(64, cpu * 5)
+
 
 def runParallel(paths, workerFn, outPath, doCopy, useWindows, stats, timeout=30, isVideo=False, maxWorkers=None):
     if not paths:
         return
+
     if maxWorkers is None:
         maxWorkers = defaultWorkers()
 
@@ -152,21 +157,27 @@ def runParallel(paths, workerFn, outPath, doCopy, useWindows, stats, timeout=30,
         for fut, path in futures.items():
             try:
                 fut.result(timeout=timeout)
+
             except concurrent.futures.TimeoutError:
                 print(f"Timeout while processing: {path}")
                 stats.inc(keyTimeout)
                 stats.addDamaged(str(path))
+
             except Exception:
                 # Keep catching regular exceptions; let KeyboardInterrupt bubble
                 stats.inc(keyTimeout)
                 stats.addDamaged(str(path))
+
     except KeyboardInterrupt:
         # Cancel everything still pending and stop threads ASAP
         for f in futures:
             f.cancel()
+
         ex.shutdown(wait=False, cancel_futures=True)
+
         # Re-raise so main() catches it and runs saveLog(stats) in finally
         raise
+
     else:
         ex.shutdown(wait=True, cancel_futures=False)
 
@@ -183,8 +194,10 @@ def isSubpath(child: Path, parent: Path):
     try:
         child.resolve().relative_to(parent.resolve())
         return True
+
     except ValueError:
         return False
+
 
 def relDirFor(pathStr, srcRootStr):
     """
@@ -219,10 +232,13 @@ def renameMedia(src, dest, recursive, doCopy, useWindows, stats, keepStructure=F
 
 def isImage(file):
     ext = os.path.splitext(file.name)[-1].lower()
+
     return ext in IMAGE_EXTS
+
 
 def isVideo(file):
     ext = os.path.splitext(file.name)[-1].lower()
+
     return ext in VIDEO_EXTS
 
 
@@ -235,6 +251,7 @@ def getUniqueFilename(filename, ext, pathDir):
     while os.path.exists(os.path.join(pathDir, filename + ext)):
         filename = f"{base}_({counter})"
         counter += 1
+
     return filename
 
 
@@ -306,6 +323,7 @@ def renameImage(imagePath, outPath, doCopy, useWindows, stats):
                 shutil.move(imagePath, fullPath)
 
         print(f"{imagePath} -> {fullPath}")
+
     except (CorruptImageWarning, UnidentifiedImageError, Exception):
         stats.inc("damaged_images")
         stats.addDamaged(imagePath)
@@ -368,6 +386,7 @@ def renameVideo(videoPath, outPath, doCopy, useWindows, stats):
                 shutil.move(videoPath, fullPath)
 
         print(f"{videoPath} -> {fullPath}")
+
     except Exception:
         stats.inc("damaged_videos")
         stats.addDamaged(videoPath)
@@ -399,6 +418,7 @@ def renameOther(filePath, outPath, doCopy, useWindows, stats):
 
         print(f"{filePath} -> {fullPath}")
         stats.inc("processed_others")
+
     except Exception:
         stats.inc("damaged_others")
         stats.addDamaged(filePath)
@@ -420,8 +440,10 @@ def useWand(path, tag):
                         if tag_lower.startswith("dng") or tag_lower == "date:modify":
                             s = s.split("+")[0]
                         return s.replace(":", "-").replace(" ", "T")
+
     except Exception:
         pass
+
     return None
 
 
@@ -440,8 +462,10 @@ def usePillow(path, tag):
                     if isinstance(data, bytes):
                         data = data.decode(errors="ignore")
                     return str(data).replace(":", "-").replace(" ", "T")
+
     except Exception:
         pass
+
     return None
 
 
@@ -449,6 +473,7 @@ def useFFMPEG(path, tag):
     creationTime = None
     try:
         metadata = ffmpeg.probe(path)
+
     except Exception:
         return None
 
@@ -467,6 +492,7 @@ def useFFMPEG(path, tag):
 
     if creationTime:
         return creationTime.rstrip("Z").split(".")[0].replace(":", "-").replace(" ", "T")
+
     return None
 
 
@@ -475,6 +501,7 @@ def useWin(path):
         ts = os.path.getmtime(path)
         dt = datetime.datetime.fromtimestamp(ts)
         return dt.strftime('%Y-%m-%dT%H-%M-%S')
+
     except Exception:
         return None
 
@@ -532,8 +559,10 @@ def main():
     try:
         renameMedia(src, dest, recursive, doCopy, useWindows, stats,
                     keepStructure=keep, timeout=timeout, maxWorkers=maxWorkers)
+
     except KeyboardInterrupt:
         print("\nExecution interrupted by the user")
+
     finally:
         saveLog(stats)
 

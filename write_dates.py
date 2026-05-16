@@ -92,7 +92,7 @@ def saveLog(stats, filename=f"write_metadata_{datetime.datetime.now().strftime('
 
 def parseArgs():
     parser = argparse.ArgumentParser(
-        description="Write capture/create date metadata based on filename (YYYY-MM-DDTHH-MM-SS)."
+        description="Write capture/create date metadata based on filename (YYYY-MM-DDTHH-mm-SS)."
     )
     parser.add_argument("src", help="Source folder (files already renamed).")
     parser.add_argument("-r", "--recursive", action="store_true", help="Process recursively (including subfolders).")
@@ -102,6 +102,7 @@ def parseArgs():
     parser.add_argument("--exiftool", default="exiftool", help="Path to exiftool binary (default: exiftool in PATH).")
     parser.add_argument("--timeout", type=int, default=30, help="Per-file timeout in seconds (default: 30).")
     parser.add_argument("--workers", type=int, default=0, help="Max threads (0 = auto).")
+
     return parser.parse_args()
 
 
@@ -112,11 +113,13 @@ def parseArgs():
 def defaultWorkers():
     # IO-bound: many threads help; tune if needed.
     cpu = os.cpu_count() or 4
+
     return min(64, cpu * 5)
 
 def runParallel(paths, workerFn, stats, timeout=30, max_workers=None):
     if not paths:
         return
+    
     if max_workers is None or max_workers <= 0:
         max_workers = defaultWorkers()
 
@@ -125,11 +128,13 @@ def runParallel(paths, workerFn, stats, timeout=30, max_workers=None):
         for fut, path in futures.items():
             try:
                 fut.result(timeout=timeout + 5)  # small cushion over subprocess timeout
+
             except concurrent.futures.TimeoutError:
                 with printLock:
                     print(f"Timeout in worker while processing: {path}")
                 stats.inc("timeouts")
                 stats.addFailed(str(path))
+
             except Exception:
                 stats.inc("errors")
                 stats.addFailed(str(path))
@@ -142,8 +147,10 @@ def runParallel(paths, workerFn, stats, timeout=30, max_workers=None):
 def isImage(path):
     return Path(path).suffix.lower() in IMAGE_EXTS
 
+
 def isVideo(path):
     return Path(path).suffix.lower() in VIDEO_EXTS
+
 
 def iterFiles(src, recursive):
     src = Path(src)
@@ -156,6 +163,7 @@ def iterFiles(src, recursive):
             if p.is_file():
                 yield p
 
+
 def dtFromFilename(path):
     """
     Extract 'YYYY:MM:DD HH:MM:SS' from filename prefix 'YYYY-MM-DDTHH-MM-SS...'
@@ -165,6 +173,7 @@ def dtFromFilename(path):
     if not m:
         return None
     y, mo, d, h, mi, s = m.groups()
+
     return f"{y}:{mo}:{d} {h}:{mi}:{s}"
 
 
@@ -180,6 +189,7 @@ def buildTagsForImage(dt, onlyIfMissing):
     put("EXIF:DateTimeOriginal", dt)
     put("EXIF:CreateDate", dt)
     put("XMP:CreateDate", dt)
+
     return tags
 
 def buildTagsForVideo(dt, onlyIfMissing):
@@ -190,7 +200,9 @@ def buildTagsForVideo(dt, onlyIfMissing):
     put("QuickTime:TrackCreateDate", dt)
     put("QuickTime:MediaCreateDate", dt)
     put("XMP:CreateDate", dt)
+
     return tags
+
 
 def buildXmpDateTags(dt, onlyIfMissing):
     # For sidecar XMP (e.g., AVI) where embedded write isn't supported
@@ -200,7 +212,9 @@ def buildXmpDateTags(dt, onlyIfMissing):
     put("XMP:DateTimeOriginal", dt)
     put("XMP:CreateDate", dt)
     put("XMP:ModifyDate", dt)
+
     return tags
+
 
 def buildFiletimeTags(dt):
     # Align filesystem timestamps as well.
@@ -217,14 +231,18 @@ def runExiftool(exiftoolBin, argsList, dryRun=False, timeout=30):
         with printLock:
             printable = " ".join(f'"{c}"' if " " in c else c for c in cmd)
             print("DRY-RUN:", printable)
+
         return 0
+    
     try:
         proc = subprocess.run(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=timeout
         )
+
     except subprocess.TimeoutExpired:
         # Let caller classify as timeout; we return nonzero
         return 124
+    
     if proc.returncode != 0:
         if proc.stderr:
             with printLock:
@@ -234,6 +252,7 @@ def runExiftool(exiftoolBin, argsList, dryRun=False, timeout=30):
         if out:
             with printLock:
                 print(out)
+
     return proc.returncode
 
 
@@ -259,6 +278,7 @@ def processOneFactory(src, recursive, dryRun, onlyIfMissing, setFiletime, exifto
             stats.addSkipped(str(path))
             with printLock:
                 print(f"[skip] {path} (unsupported extension)")
+
             return
 
         ext = Path(path).suffix.lower()
@@ -299,6 +319,7 @@ def processOneFactory(src, recursive, dryRun, onlyIfMissing, setFiletime, exifto
             stats.addFailed(str(path))
             with printLock:
                 print(f"[err]  {path}")
+
     return processOne
 
 
@@ -341,8 +362,10 @@ def main():
             timeout=args.timeout,
             max_workers=args.workers,
         )
+
     except KeyboardInterrupt:
         print("\nExecution interrupted by the user")
+        
     finally:
         saveLog(stats)
 
