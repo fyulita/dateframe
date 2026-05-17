@@ -4,6 +4,17 @@ Python scripts for inspecting metadata, renaming photos and videos using their r
 
 ## Included scripts
 
+### `media_common.py`
+
+Shared helpers used by the main scripts.
+
+- shared image/video extension sets
+- media type helpers
+- shared path and date helpers
+- shared ExifTool runner
+- shared parallel helpers
+- base stats helper
+
 ### `read_metadata.py`
 
 Reads and prints file metadata using multiple methods:
@@ -34,7 +45,9 @@ Takes files already renamed in the format `YYYY-MM-DDTHH-mm-SS.ext` and writes t
 
 ### `copy_icloud.py`
 
-Designed for iCloud Photos on Windows.
+Windows-only script designed for iCloud Photos on Windows.
+
+It depends on Windows Shell / COM metadata through `pywin32`, so it is not expected to run on Linux or macOS.
 
 - reads the Windows Shell / iCloud date first
 - filters by date range with `--from-date` and `--to-date`
@@ -42,6 +55,10 @@ Designed for iCloud Photos on Windows.
 - renames files using that Shell date
 - writes embedded metadata with `ExifTool`
 - can optionally create `.xmp` sidecar files with `--write-xmp`
+- can skip embedded metadata entirely with `--no-metadata`
+- can verify written date metadata with `--verify`
+- can skip video metadata writing with `--skip-video-metadata`
+- can write a CSV result log with `--csv-log`
 - limits concurrent iCloud downloads with `--copy-workers` to avoid overloading iCloud
 
 ### `list_extensions.py`
@@ -51,6 +68,8 @@ Lists file extensions found in a folder. Useful for quickly checking which file 
 ## Requirements
 
 This project is primarily intended for Windows but it works partially in other operating systems.
+
+`copy_icloud.py` is the exception: it is Windows-only because it depends on Windows Shell metadata and `pywin32`.
 
 ### 1. Install Python
 
@@ -120,7 +139,7 @@ pip install -r requirements.txt
 
 Notes:
 
-- `pywin32` is required for `copy_icloud.py`
+- `pywin32` is required for `copy_icloud.py` and is only available on Windows
 - `Wand` requires ImageMagick to already be installed
 - `ffmpeg-python` is only a wrapper and does not replace the `ffmpeg` binaries
 

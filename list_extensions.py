@@ -4,7 +4,8 @@
 import os
 import sys
 import argparse
-from pathlib import Path
+
+from media_common import iterFiles, resolvePath
 
 
 def parseArgs():
@@ -18,21 +19,10 @@ def parseArgs():
 
 
 def getExtensions(folderPath, recursive=False):
-    """
-    Collect a set of lowercase file extensions under 'folderPath'.
-    Default behavior matches the original script (non-recursive); enable with -r.
-    """
     exts = set()
-    p = Path(folderPath)
 
-    if recursive:
-        for entry in p.rglob("*"):
-            if entry.is_file():
-                exts.add(entry.suffix.lower())
-    else:
-        for entry in p.iterdir():
-            if entry.is_file():
-                exts.add(entry.suffix.lower())
+    for entry in iterFiles(resolvePath(folderPath), recursive):
+        exts.add(entry.suffix.lower())
 
     return exts
 

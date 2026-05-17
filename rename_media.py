@@ -6,15 +6,25 @@ import os
 import threading
 import concurrent.futures
 import warnings
-from collections import defaultdict
 import argparse
-from pathlib import Path
 import shutil
-import datetime
 import wand.image as wand
 from wand.exceptions import CorruptImageWarning
 from PIL import Image, ExifTags, UnidentifiedImageError
 import ffmpeg
+
+from media_common import (
+    BaseStats,
+    IMAGE_EXTS,
+    VIDEO_EXTS,
+    defaultWorkers,
+    getUniqueFilename,
+    isSubpath,
+    relDirFor,
+    resolvePath,
+    saveSimpleLog,
+    timestampedName,
+)
 
 # ----------------------
 # Config / constants
@@ -25,10 +35,6 @@ warnings.simplefilter("ignore", CorruptImageWarning)
 
 # Global lock for filename generation
 filenameLock = threading.Lock()
-
-# Image and video file extensions
-IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".heic", ".tiff", ".arw", ".webp", ".dng", ".thm"}
-VIDEO_EXTS = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".mpg", ".mpeg", ".wmv", ".mts", ".m2ts", ".3gp"}
 
 # Limit ImageMagick internal threads (prevents each decode from spawning many threads)
 os.environ.setdefault("MAGICK_THREAD_LIMIT", "1")
@@ -52,16 +58,11 @@ WAND_SEM = threading.Semaphore(int(os.environ.get("WAND_MAX_CONCURRENT", "5")))
 # Stats helper
 # ----------------------
 
-class Stats:
+class Stats(BaseStats):
     def __init__(self):
-        self.lock = threading.Lock()
-        self.data = defaultdict(int)
+        super().__init__()
         self.damagedFiles = []
         self.unchangedFiles = []
-
-    def inc(self, key):
-        with self.lock:
-            self.data[key] += 1
 
     def addDamaged(self, filename):
         with self.lock:
@@ -85,24 +86,28 @@ class Stats:
 # Logging
 # ----------------------
 
-def saveLog(stats, filename=f"rename_media_{datetime.datetime.now().strftime('%Y-%m-%dT%H-%M-%S')}.txt"):
-    with open(filename, "w", encoding="utf-8") as f:
-        for key in stats.summary().keys():
-            f.write(f"{key}: {stats.summary()[key]}\n")
+def saveLog(stats, filename=None):
+    if filename is None:
+        filename = timestampedName("rename_media")
 
-        damaged = stats.getDamaged()
-        if damaged:
-            f.write("\nDamaged files:\n")
-            for file in damaged:
-                f.write(file + "\n")
+    lines = []
 
-        unchanged = stats.getUnchanged()
-        if unchanged:
-            f.write("\nUnchanged files:\n")
-            for file in unchanged:
-                f.write(file + "\n")
+    for key in stats.summary().keys():
+        lines.append(f"{key}: {stats.summary()[key]}")
 
-    print(f"\nLog saved to {filename}")
+    damaged = stats.getDamaged()
+    if damaged:
+        lines.append("")
+        lines.append("Damaged files:")
+        lines.extend(damaged)
+
+    unchanged = stats.getUnchanged()
+    if unchanged:
+        lines.append("")
+        lines.append("Unchanged files:")
+        lines.extend(unchanged)
+
+    saveSimpleLog(lines, filename)
 
 
 # ----------------------
@@ -130,30 +135,22 @@ def parseArgs():
 # Parallel runner
 # ----------------------
 
-def defaultWorkers():
-    # IO-bound: many threads help; tune if needed.
-    cpu = os.cpu_count() or 4
-
-    return min(64, cpu * 5)
-
-
-def runParallel(paths, workerFn, outPath, doCopy, useWindows, stats, timeout=30, isVideo=False, maxWorkers=None):
+def runParallel(paths, workerFn, stats, timeout=30, isVideo=False, maxWorkers=None):
     if not paths:
         return
 
-    if maxWorkers is None:
+    if maxWorkers is None or maxWorkers <= 0:
         maxWorkers = defaultWorkers()
 
     keyTimeout = "damaged_videos" if isVideo else "damaged_images"
 
     ex = concurrent.futures.ThreadPoolExecutor(max_workers=maxWorkers)
     futures = {}
-    try:
-        # Submit all tasks
-        for p in paths:
-            futures[ex.submit(workerFn, p, outPath, doCopy, useWindows, stats)] = p
 
-        # Consume results; allow per-task timeouts
+    try:
+        for path in paths:
+            futures[ex.submit(workerFn, path)] = path
+
         for fut, path in futures.items():
             try:
                 fut.result(timeout=timeout)
@@ -164,48 +161,17 @@ def runParallel(paths, workerFn, outPath, doCopy, useWindows, stats, timeout=30,
                 stats.addDamaged(str(path))
 
             except Exception:
-                # Keep catching regular exceptions; let KeyboardInterrupt bubble
                 stats.inc(keyTimeout)
                 stats.addDamaged(str(path))
 
     except KeyboardInterrupt:
-        # Cancel everything still pending and stop threads ASAP
-        for f in futures:
-            f.cancel()
+        for fut in futures:
+            fut.cancel()
 
         ex.shutdown(wait=False, cancel_futures=True)
-
-        # Re-raise so main() catches it and runs saveLog(stats) in finally
         raise
-
     else:
         ex.shutdown(wait=True, cancel_futures=False)
-
-
-# ----------------------
-# Paths / helpers
-# ----------------------
-
-def isSubpath(child: Path, parent: Path):
-    """
-    Return True if 'child' resides inside 'parent'.
-    Works on Python < 3.9 (no Path.is_relative_to).
-    """
-    try:
-        child.resolve().relative_to(parent.resolve())
-        return True
-
-    except ValueError:
-        return False
-
-
-def relDirFor(pathStr, srcRootStr):
-    """
-    Return relative directory of 'pathStr' with respect to 'srcRootStr'.
-    Empty string if it's directly under the root.
-    """
-    rel = os.path.relpath(os.path.dirname(pathStr), start=srcRootStr)
-    return "" if rel == "." else rel
 
 
 # ----------------------
@@ -225,9 +191,32 @@ def renameMedia(src, dest, recursive, doCopy, useWindows, stats, keepStructure=F
         videos = [str(f) for f in files if isVideo(f)]
         others = [str(f) for f in files if not (isImage(f) or isVideo(f))]
 
-    runParallel(images, renameImage, str(dest), doCopy, useWindows, stats, timeout=timeout, isVideo=False, maxWorkers=maxWorkers)
-    runParallel(videos, renameVideo, str(dest), doCopy, useWindows, stats, timeout=timeout, isVideo=True, maxWorkers=maxWorkers)
-    runParallel(others, renameOther, str(dest), doCopy, useWindows, stats, timeout=timeout, isVideo=False, maxWorkers=maxWorkers)
+    runParallel(
+        images,
+        workerFn=lambda p: renameImage(p, str(dest), doCopy, useWindows, stats),
+        stats=stats,
+        timeout=timeout,
+        isVideo=False,
+        maxWorkers=maxWorkers,
+    )
+
+    runParallel(
+        videos,
+        workerFn=lambda p: renameVideo(p, str(dest), doCopy, useWindows, stats),
+        stats=stats,
+        timeout=timeout,
+        isVideo=True,
+        maxWorkers=maxWorkers,
+    )
+
+    runParallel(
+        others,
+        workerFn=lambda p: renameOther(p, str(dest), doCopy, useWindows, stats),
+        stats=stats,
+        timeout=timeout,
+        isVideo=False,
+        maxWorkers=maxWorkers,
+    )
 
 
 def isImage(file):
@@ -240,19 +229,6 @@ def isVideo(file):
     ext = os.path.splitext(file.name)[-1].lower()
 
     return ext in VIDEO_EXTS
-
-
-def getUniqueFilename(filename, ext, pathDir):
-    """
-    If a file with the same name exists, append _(<n>) to the basename.
-    """
-    base = filename
-    counter = 1
-    while os.path.exists(os.path.join(pathDir, filename + ext)):
-        filename = f"{base}_({counter})"
-        counter += 1
-
-    return filename
 
 
 def renameImage(imagePath, outPath, doCopy, useWindows, stats):
@@ -513,8 +489,8 @@ def useWin(path):
 def main():
     args = parseArgs()
 
-    src = Path(os.path.normpath(args.src)).expanduser().resolve()
-    dest = Path(os.path.normpath(args.dest)).expanduser().resolve()
+    src = resolvePath(args.src)
+    dest = resolvePath(args.dest)
 
     if not src.exists() or not src.is_dir():
         print(f"Error: source folder doesn't exist or is not a folder: {src}")

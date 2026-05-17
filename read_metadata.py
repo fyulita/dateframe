@@ -5,11 +5,12 @@ import sys
 import os
 import datetime
 import argparse
-from pathlib import Path
 import concurrent.futures
 import wand.image as wand
 from PIL import Image, ExifTags
 import ffmpeg
+
+from media_common import resolvePath
 
 
 def useWand(path):
@@ -102,7 +103,7 @@ def parseArgs():
 def main():
     args = parseArgs()
 
-    path = Path(os.path.normpath(args.path)).expanduser().resolve()
+    path = resolvePath(args.path)
 
     if not path.exists() or not path.is_file():
         print(f"Error: file doesn't exist or is not a file: {path}")
