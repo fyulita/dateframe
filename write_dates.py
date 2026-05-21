@@ -110,7 +110,7 @@ def buildTagsForImage(dt, onlyIfMissing):
     tags = []
 
     def put(tag, value):
-        tags.append(f"-{tag}={value}" if not onlyIfMissing else f"-{tag}-={value}")
+        tags.append(f"-{tag}={value}")
 
     put("EXIF:DateTimeOriginal", dt)
     put("EXIF:CreateDate", dt)
@@ -123,7 +123,7 @@ def buildTagsForVideo(dt, onlyIfMissing):
     tags = []
 
     def put(tag, value):
-        tags.append(f"-{tag}={value}" if not onlyIfMissing else f"-{tag}-={value}")
+        tags.append(f"-{tag}={value}")
 
     put("QuickTime:CreateDate", dt)
     put("QuickTime:TrackCreateDate", dt)
@@ -137,7 +137,7 @@ def buildXmpDateTags(dt, onlyIfMissing):
     tags = []
 
     def put(tag, value):
-        tags.append(f"-{tag}={value}" if not onlyIfMissing else f"-{tag}-={value}")
+        tags.append(f"-{tag}={value}")
 
     put("XMP:DateTimeOriginal", dt)
     put("XMP:CreateDate", dt)
@@ -202,6 +202,9 @@ def main():
             if args.set_filetime:
                 tags += buildFiletimeTags(dt)
             argsList = tags + [str(path)]
+
+        if args.if_missing:
+            argsList = ["-wm", "cg"] + argsList
 
         rc = runExiftool(
             exiftoolPath=args.exiftool,

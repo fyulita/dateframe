@@ -209,8 +209,10 @@ def dtFromFilename(path):
 
 def timestampedName(prefix, ext="txt"):
     stamp = datetime.datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
+    logDir = Path("logs")
+    logDir.mkdir(exist_ok=True)
 
-    return f"{prefix}_{stamp}.{ext}"
+    return str(logDir / f"{prefix}_{stamp}.{ext}")
 
 
 def saveSimpleLog(lines, filename):

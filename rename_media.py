@@ -3,6 +3,7 @@
 
 import sys
 import os
+import datetime
 import threading
 import concurrent.futures
 import warnings
@@ -19,7 +20,9 @@ from media_common import (
     VIDEO_EXTS,
     defaultWorkers,
     getUniqueFilename,
+    isImage,
     isSubpath,
+    isVideo,
     relDirFor,
     resolvePath,
     saveSimpleLog,
@@ -217,18 +220,6 @@ def renameMedia(src, dest, recursive, doCopy, useWindows, stats, keepStructure=F
         isVideo=False,
         maxWorkers=maxWorkers,
     )
-
-
-def isImage(file):
-    ext = os.path.splitext(file.name)[-1].lower()
-
-    return ext in IMAGE_EXTS
-
-
-def isVideo(file):
-    ext = os.path.splitext(file.name)[-1].lower()
-
-    return ext in VIDEO_EXTS
 
 
 def renameImage(imagePath, outPath, doCopy, useWindows, stats):
