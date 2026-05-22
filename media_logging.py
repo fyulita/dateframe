@@ -35,6 +35,37 @@ RUN_CONTEXT_FIELDS = [
     "run_interrupted",
 ]
 
+SUMMARY_COUNT_GROUPS = [
+    ["processed_images", "processed_videos", "copied_images", "copied_videos"],
+    ["copy_errored_images", "copy_errored_videos"],
+    ["metadata_written_images", "metadata_written_videos"],
+    ["metadata_errored_images", "metadata_errored_videos"],
+    [
+        "metadata_skipped_disabled",
+        "metadata_skipped_videos",
+        "metadata_verified",
+        "metadata_verify_failed",
+        "xmp_sidecars_written",
+        "xmp_sidecar_errors",
+    ],
+    [
+        "skipped_not_media",
+        "skipped_no_date",
+        "skipped_outside_date_range",
+        "skipped_resume_completed",
+        "copy_retries",
+        "exiftool_timeouts",
+        "exiftool_errors",
+        "tmp_removed",
+    ],
+]
+
+SUMMARY_COUNT_KEYS = [
+    key
+    for group in SUMMARY_COUNT_GROUPS
+    for key in group
+]
+
 
 def truthyCsvValue(value):
     return str(value).strip().lower() in {"true", "1", "yes"}
@@ -97,24 +128,30 @@ def isCompletedCsvRow(row, currentFromDate=None, currentToDate=None, enforceDate
     return False
 
 
-def completedSourcesFromRows(rows, currentFromDate=None, currentToDate=None):
+def completedSourcesFromRows(rows, isCompletedFn=None, sourceField="source", **isCompletedKwargs):
     completed = set()
+    isCompletedFn = isCompletedFn or isCompletedCsvRow
 
     for row in rows:
-        source = (row.get("source") or "").strip()
+        source = (row.get(sourceField) or "").strip()
 
         if not source:
             continue
 
-        if isCompletedCsvRow(
-            row,
-            currentFromDate=currentFromDate,
-            currentToDate=currentToDate,
-            enforceDateFilter=True,
-        ):
+        if isCompletedFn(row, **isCompletedKwargs):
             completed.add(pathKey(source))
 
     return completed
+
+
+def completedIcloudSourcesFromRows(rows, currentFromDate=None, currentToDate=None):
+    return completedSourcesFromRows(
+        rows,
+        isCompletedFn=isCompletedCsvRow,
+        currentFromDate=currentFromDate,
+        currentToDate=currentToDate,
+        enforceDateFilter=True,
+    )
 
 
 def loadResumeCopiedDestinations(rows):
@@ -133,7 +170,7 @@ def loadResumeCopiedDestinations(rows):
     return copied
 
 
-def loadResumeSources(csvPath):
+def loadResumeRows(csvPath, csvFields, runContextFields, sourceField="source", isCompletedFn=None):
     seen = set()
     context = {}
     rows = []
@@ -141,48 +178,79 @@ def loadResumeSources(csvPath):
     with open(csvPath, newline="", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
 
-        if not reader.fieldnames or "source" not in reader.fieldnames:
-            raise ValueError("Resume CSV must contain a 'source' column.")
+        if not reader.fieldnames or sourceField not in reader.fieldnames:
+            raise ValueError(f"Resume CSV must contain a '{sourceField}' column.")
 
         for row in reader:
             if not context:
-                context = {field: row.get(field, "") for field in RUN_CONTEXT_FIELDS}
+                context = {field: row.get(field, "") for field in runContextFields}
 
-            source = (row.get("source") or "").strip()
+            source = (row.get(sourceField) or "").strip()
 
             if not source:
                 continue
 
-            rows.append({field: row.get(field, "") for field in CSV_FIELDS + RUN_CONTEXT_FIELDS})
+            rows.append({field: row.get(field, "") for field in csvFields + runContextFields})
             key = pathKey(source)
             seen.add(key)
 
-    completed = completedSourcesFromRows(rows)
+    completed = completedSourcesFromRows(rows, isCompletedFn=isCompletedFn, sourceField=sourceField)
     return completed, seen, context, rows
 
 
-def mergedCsvRows(stats):
+def loadResumeSources(csvPath):
+    return loadResumeRows(
+        csvPath,
+        csvFields=CSV_FIELDS,
+        runContextFields=RUN_CONTEXT_FIELDS,
+        isCompletedFn=isCompletedCsvRow,
+    )
+
+
+def mergedCsvRows(stats, sourceField="source"):
     currentRows = stats.getCsvRows()
-    currentKeys = {pathKey(row["source"]) for row in currentRows if row.get("source")}
+    currentKeys = {pathKey(row[sourceField]) for row in currentRows if row.get(sourceField)}
 
     return [
         row
         for row in stats.getPreviousCsvRows()
-        if row.get("source") and pathKey(row["source"]) not in currentKeys
+        if row.get(sourceField) and pathKey(row[sourceField]) not in currentKeys
     ] + currentRows
 
 
-def countCompletedRows(rows):
-    return sum(1 for row in rows if isCompletedCsvRow(row))
+def countCompletedRows(rows, isCompletedFn=None):
+    isCompletedFn = isCompletedFn or isCompletedCsvRow
+    return sum(1 for row in rows if isCompletedFn(row))
 
 
 def logPaths(prefix, logDir, runStartedAt):
-    runStamp = runStartedAt.strftime("%Y-%m-%dT%H-%M-%S")
+    baseStamp = runStartedAt.strftime("%Y-%m-%dT%H-%M-%S")
+    runStamp = baseStamp
+    counter = 1
+
+    while True:
+        logName = timestampedName(prefix, logDir=logDir, stamp=runStamp)
+        csvLogName = timestampedName(prefix, ext="csv", logDir=logDir, stamp=runStamp)
+        checkpointName = timestampedName(prefix, ext="csv", logDir=logDir, stamp=f"{runStamp}_checkpoint")
+
+        if not Path(logName).exists() and not Path(csvLogName).exists() and not Path(checkpointName).exists():
+            return logName, csvLogName, checkpointName
+
+        runStamp = f"{baseStamp}_{counter}"
+        counter += 1
+
+
+def logPathsFromCheckpoint(checkpointPath):
+    checkpointPath = Path(checkpointPath)
+    stem = checkpointPath.stem
+
+    if stem.endswith("_checkpoint"):
+        stem = stem[:-len("_checkpoint")]
 
     return (
-        timestampedName(prefix, logDir=logDir, stamp=runStamp),
-        timestampedName(prefix, ext="csv", logDir=logDir, stamp=runStamp),
-        timestampedName(prefix, ext="csv", logDir=logDir, stamp=f"{runStamp}_checkpoint"),
+        str(checkpointPath.with_name(f"{stem}.txt")),
+        str(checkpointPath.with_name(f"{stem}.csv")),
+        str(checkpointPath),
     )
 
 
@@ -193,8 +261,18 @@ def withRunContext(row, runContext):
     return outRow
 
 
-def saveCsvLog(rows, csvPath, runContext, checkpointAt=None, atomic=False):
-    fieldnames = CSV_FIELDS + RUN_CONTEXT_FIELDS
+def saveCsvLog(
+    rows,
+    csvPath,
+    runContext,
+    checkpointAt=None,
+    atomic=False,
+    csvFields=None,
+    runContextFields=None,
+):
+    csvFields = csvFields or CSV_FIELDS
+    runContextFields = runContextFields or RUN_CONTEXT_FIELDS
+    fieldnames = csvFields + runContextFields
 
     if checkpointAt is not None:
         fieldnames = fieldnames + ["run_checkpoint_at"]
@@ -207,7 +285,7 @@ def saveCsvLog(rows, csvPath, runContext, checkpointAt=None, atomic=False):
         writer.writeheader()
 
         for row in rows:
-            if any(field in row for field in RUN_CONTEXT_FIELDS):
+            if any(field in row for field in runContextFields):
                 outRow = dict(row)
             else:
                 outRow = withRunContext(row, runContext)
@@ -226,20 +304,45 @@ def saveCsvLog(rows, csvPath, runContext, checkpointAt=None, atomic=False):
         print(f"Checkpoint CSV saved to {csvPath}")
 
 
-def saveCheckpoint(stats, checkpointPath, runContext):
-    rows = mergedCsvRows(stats)
+def saveCheckpoint(stats, checkpointPath, runContext, csvFields=None, runContextFields=None, sourceField="source"):
+    rows = mergedCsvRows(stats, sourceField=sourceField)
 
     if not rows:
         return False
 
-    saveCsvLog(rows, checkpointPath, runContext, checkpointAt=datetime.datetime.now(), atomic=True)
+    saveCsvLog(
+        rows,
+        checkpointPath,
+        runContext,
+        checkpointAt=datetime.datetime.now(),
+        atomic=True,
+        csvFields=csvFields,
+        runContextFields=runContextFields,
+    )
     return True
 
 
-def runCheckpointLoop(stats, checkpointPath, runContext, checkpointSeconds, checkpointStopEvent, printLock=None):
+def runCheckpointLoop(
+    stats,
+    checkpointPath,
+    runContext,
+    checkpointSeconds,
+    checkpointStopEvent,
+    printLock=None,
+    csvFields=None,
+    runContextFields=None,
+    sourceField="source",
+):
     while not checkpointStopEvent.wait(checkpointSeconds):
         try:
-            saveCheckpoint(stats, checkpointPath, runContext)
+            saveCheckpoint(
+                stats,
+                checkpointPath,
+                runContext,
+                csvFields=csvFields,
+                runContextFields=runContextFields,
+                sourceField=sourceField,
+            )
         except Exception as e:
             if printLock:
                 with printLock:
@@ -265,16 +368,65 @@ def removeCheckpoint(checkpointPath, printLock=None):
                 print(message)
 
 
-def saveRunLog(stats, logPrefix, logDir, runContext, runStartedAt, runEndedAt, interrupted):
-    logName, csvLogName, _checkpointName = logPaths(logPrefix, logDir, runStartedAt)
+def buildDefaultSummaryLines(data, countKeys=None):
+    countKeys = countKeys or SUMMARY_COUNT_KEYS
+    return [f"{key}: {data.get(key, 0)}" for key in countKeys]
+
+
+def buildGroupedSummaryLines(data, countGroups=None):
+    countGroups = countGroups or SUMMARY_COUNT_GROUPS
+    lines = []
+
+    for index, group in enumerate(countGroups):
+        if index > 0:
+            lines.append("")
+
+        for key in group:
+            lines.append(f"{key}: {data.get(key, 0)}")
+
+    return lines
+
+
+def saveRunLog(
+    stats,
+    logPrefix,
+    logDir,
+    runContext,
+    runStartedAt,
+    runEndedAt,
+    interrupted,
+    csvFields=None,
+    runContextFields=None,
+    isCompletedFn=None,
+    sourceField="source",
+    summaryLinesFn=None,
+    summaryCountKeys=None,
+    logName=None,
+    csvLogName=None,
+):
+    if logName is None or csvLogName is None:
+        logName, csvLogName, _checkpointName = logPaths(logPrefix, logDir, runStartedAt)
+
+    csvFields = csvFields or CSV_FIELDS
+    runContextFields = runContextFields or RUN_CONTEXT_FIELDS
+    isCompletedFn = isCompletedFn or isCompletedCsvRow
 
     data = stats.summary()
     currentRows = stats.getCsvRows()
     previousRows = stats.getPreviousCsvRows()
-    accumulatedRows = mergedCsvRows(stats)
-    accumulatedCompleted = countCompletedRows(accumulatedRows)
+    accumulatedRows = mergedCsvRows(stats, sourceField=sourceField)
+    accumulatedCompleted = countCompletedRows(accumulatedRows, isCompletedFn=isCompletedFn)
     runContext = dict(runContext)
     runContext["run_interrupted"] = interrupted
+    summaryLines = (
+        summaryLinesFn(data, stats)
+        if summaryLinesFn
+        else (
+            buildGroupedSummaryLines(data)
+            if summaryCountKeys is None
+            else buildDefaultSummaryLines(data, countKeys=summaryCountKeys)
+        )
+    )
 
     lines = [
         "Run:",
@@ -285,32 +437,7 @@ def saveRunLog(stats, logPrefix, logDir, runContext, runStartedAt, runEndedAt, i
         f"resume_csv: {runContext.get('run_resume_csv', '')}",
         "",
         "Current run counts:",
-        f"processed_images: {data.get('processed_images', 0)}",
-        f"processed_videos: {data.get('processed_videos', 0)}",
-        f"copied_images: {data.get('copied_images', 0)}",
-        f"copied_videos: {data.get('copied_videos', 0)}",
-        f"copy_errored_images: {data.get('copy_errored_images', 0)}",
-        f"copy_errored_videos: {data.get('copy_errored_videos', 0)}",
-        f"metadata_written_images: {data.get('metadata_written_images', 0)}",
-        f"metadata_written_videos: {data.get('metadata_written_videos', 0)}",
-        f"metadata_errored_images: {data.get('metadata_errored_images', 0)}",
-        f"metadata_errored_videos: {data.get('metadata_errored_videos', 0)}",
-        "",
-        f"metadata_skipped_disabled: {data.get('metadata_skipped_disabled', 0)}",
-        f"metadata_skipped_videos: {data.get('metadata_skipped_videos', 0)}",
-        f"metadata_verified: {data.get('metadata_verified', 0)}",
-        f"metadata_verify_failed: {data.get('metadata_verify_failed', 0)}",
-        f"xmp_sidecars_written: {data.get('xmp_sidecars_written', 0)}",
-        f"xmp_sidecar_errors: {data.get('xmp_sidecar_errors', 0)}",
-        "",
-        f"skipped_not_media: {data.get('skipped_not_media', 0)}",
-        f"skipped_no_date: {data.get('skipped_no_date', 0)}",
-        f"skipped_outside_date_range: {data.get('skipped_outside_date_range', 0)}",
-        f"skipped_resume_completed: {data.get('skipped_resume_completed', 0)}",
-        f"copy_retries: {data.get('copy_retries', 0)}",
-        f"exiftool_timeouts: {data.get('exiftool_timeouts', 0)}",
-        f"exiftool_errors: {data.get('exiftool_errors', 0)}",
-        f"tmp_removed: {data.get('tmp_removed', 0)}",
+        *summaryLines,
         "",
         "CSV accumulated counts:",
         f"previous_csv_rows: {len(previousRows)}",
@@ -323,6 +450,12 @@ def saveRunLog(stats, logPrefix, logDir, runContext, runStartedAt, runEndedAt, i
     saveSimpleLog(lines, logName)
 
     if accumulatedRows:
-        saveCsvLog(accumulatedRows, csvLogName, runContext)
+        saveCsvLog(
+            accumulatedRows,
+            csvLogName,
+            runContext,
+            csvFields=csvFields,
+            runContextFields=runContextFields,
+        )
     else:
         print("CSV log skipped because no rows were recorded.")

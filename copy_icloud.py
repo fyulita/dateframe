@@ -33,7 +33,7 @@ from media_common import (
     runParallel,
 )
 from media_logging import (
-    completedSourcesFromRows,
+    completedIcloudSourcesFromRows,
     loadResumeCopiedDestinations,
     loadResumeSources,
     logPaths,
@@ -529,7 +529,7 @@ def main():
         sys.exit(2)
 
     applyRunDefaults(args, resumeContext, inheritInputMode=not srcProvided)
-    resumeCompletedSources = completedSourcesFromRows(
+    resumeCompletedSources = completedIcloudSourcesFromRows(
         resumeRows,
         currentFromDate=args.from_date,
         currentToDate=args.to_date,
@@ -597,7 +597,7 @@ def main():
         sys.exit(9)
 
     logDir = resolvePath(args.log_path)
-    _txtLogName, _csvLogName, checkpointPath = logPaths("copy_icloud", logDir, runStartedAt)
+    txtLogName, csvLogName, checkpointPath = logPaths("copy_icloud", logDir, runStartedAt)
     runContext = buildRunContext(args, src, dest)
     copySemaphore = threading.Semaphore(args.copy_workers)
     fromDate, toDate = parseOptionalDateRange(args.from_date, args.to_date)
@@ -663,6 +663,8 @@ def main():
             runStartedAt=runStartedAt,
             runEndedAt=runEndedAt,
             interrupted=stopEvent.is_set(),
+            logName=txtLogName,
+            csvLogName=csvLogName,
         )
         removeCheckpoint(checkpointPath, printLock=printLock)
 

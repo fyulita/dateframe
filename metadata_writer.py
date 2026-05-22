@@ -13,6 +13,7 @@ from media_common import (
     isImage,
     isVideo,
     runExiftool,
+    sidecarPathFor,
 )
 from windows_metadata import cleanShellValue, parseWindowsShellDate
 
@@ -85,7 +86,7 @@ def buildXmpSidecarContent(sourcePath, copiedPath, metadata):
 
 
 def writeXmpSidecar(sourcePath, copiedPath, metadata):
-    xmpPath = Path(str(copiedPath) + ".xmp")
+    xmpPath = sidecarPathFor(copiedPath, ".xmp")
     content = buildXmpSidecarContent(sourcePath, copiedPath, metadata)
 
     with open(xmpPath, "w", encoding="utf-8") as f:
@@ -144,7 +145,7 @@ def writeEmbeddedMetadata(copiedPath, metadata, timeout, dateOrder, exiftoolPath
         return 0, ""
 
     if path.suffix.lower() in UNSUPPORTED_EMBED_WRITE:
-        argsList = tags + ["-o", "%d%f.xmp", str(path)]
+        argsList = tags + ["-o", "%d%f.%e.xmp", str(path)]
     else:
         argsList = tags + [str(path)]
 
@@ -190,7 +191,7 @@ def verifyWrittenDate(copiedPath, expectedDate, exiftoolPath, timeout, printLock
     path = Path(copiedPath)
 
     if path.suffix.lower() in UNSUPPORTED_EMBED_WRITE:
-        targetPath = path.with_suffix(".xmp")
+        targetPath = sidecarPathFor(path, ".xmp")
         tags = VERIFY_TAGS_XMP
     elif isImage(path):
         targetPath = path

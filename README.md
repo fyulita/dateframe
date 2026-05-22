@@ -28,14 +28,136 @@ Copies or moves media files from a source folder to a destination folder and ren
 - can use Windows file dates as a fallback with `--windows`
 - uses `shutil.copy2` when copying, to preserve file metadata
 - keeps folder structure with `--keep-structure`
+- can take files from a TXT input list with `--input-txt`
+- keeps associated `.xmp` / `.xml` sidecars together with their media file
+- always writes a CSV log that can be used to resume later
+- writes a TXT summary log
+- writes periodic checkpoint CSVs during long runs
+- uses 4 workers by default, which is safer for RAW-heavy folders than automatic thread scaling
+
+Basic copy usage:
+
+```powershell
+python rename_media.py --copy "C:\Users\You\Pictures\Originals" "C:\Users\You\Pictures\Renamed"
+```
+
+Move recursively while keeping the source folder structure:
+
+```powershell
+python rename_media.py --move --recursive --keep-structure "C:\Users\You\Pictures\Unsorted" "C:\Users\You\Pictures\Sorted"
+```
+
+TXT input list usage:
+
+```powershell
+python rename_media.py --copy --input-txt ".\files-to-rename.txt" "C:\Users\You\Pictures\Renamed"
+```
+
+Resume from the latest CSV log:
+
+```powershell
+python rename_media.py --resume-csv ".\logs\rename_media_2026-05-22T13-37-05.csv"
+```
+
+Resume from a checkpoint after a power loss:
+
+```powershell
+python rename_media.py --resume-csv ".\logs\rename_media_2026-05-22T13-37-05_checkpoint.csv"
+```
+
+When resuming, `src` and `dest` can be omitted if the CSV includes run context. You can still override operational flags such as `--workers`, `--windows`, `--quiet`, `--copy`, and `--move`.
+
+`rename_media.py` writes logs to `.\logs` by default. Change this with `--log-path`.
+
+The CSV log records each source path, destination path, detected date, media type, action (`copy` or `move`), date source, whether processing succeeded, errors, and run context. Successful rows are skipped when resuming; failed rows are retried if the source path still exists.
+
+When a sidecar contains a date with timezone offset, the local capture time is used for the filename and the offset is preserved in the CSV. The script does not convert dates to UTC.
+
+Associated sidecars are renamed using the full renamed media filename plus the sidecar extension. For example:
+
+```text
+C0001.MP4      -> 2026-03-02T03-20-52.MP4
+C0001M01.XML   -> 2026-03-02T03-20-52.MP4.M01.XML
+IMG_1234.ARW   -> 2026-03-02T03-20-52.ARW
+IMG_1234.XMP   -> 2026-03-02T03-20-52.ARW.XMP
+```
+
+The script detects regular same-stem sidecars such as `IMG_1234.XMP`, and Sony-style XML sidecars such as `C0001M01.XML` for `C0001.MP4`.
+
+Useful CSV columns:
+
+- `source`: original file path
+- `dest`: copied or moved destination path
+- `date`: local capture time used for the filename
+- `date_offset`: timezone offset found in a sidecar, if available
+- `media_type`: `image`, `video`, `sidecar`, or `other`
+- `date_source`: where the date came from, such as `wand:dng:create.date` or `sidecar:...:creationdate`
+- `processed_ok`: `True` when the row completed successfully
 
 ### `write_dates.py`
 
 Takes files already renamed in the format `YYYY-MM-DDTHH-mm-SS.ext` and writes that date into the file using `ExifTool`.
 
 - supports recursive processing
+- can take files from a TXT input list with `--input-txt`
 - can write only missing tags with `--if-missing`
 - can also update filesystem dates with `--set-filetime`
+- always writes a CSV log that can be used to resume later
+- writes a TXT summary log
+- writes periodic checkpoint CSVs during long runs
+- uses 2 workers and a 90-second per-file ExifTool timeout by default
+
+Basic usage:
+
+```powershell
+python write_dates.py "C:\Users\You\Pictures\Renamed"
+```
+
+Resume from the latest CSV log:
+
+```powershell
+python write_dates.py --resume-csv ".\logs\write_dates_2026-05-22T12-58-10.csv"
+```
+
+Resume with explicit conservative settings:
+
+```powershell
+python write_dates.py --resume-csv ".\logs\write_dates_2026-05-22T12-58-10.csv" --workers 1 --timeout 90
+```
+
+Resume from a checkpoint after a power loss:
+
+```powershell
+python write_dates.py --resume-csv ".\logs\write_dates_2026-05-22T12-58-10_checkpoint.csv"
+```
+
+TXT input list usage:
+
+```powershell
+python write_dates.py --input-txt ".\files-to-write.txt"
+```
+
+`write_dates.py` writes logs to `.\logs` by default. Change this with `--log-path`.
+
+The CSV log records each source path, the date parsed from the filename, whether metadata writing succeeded, the write target (`embedded`, generated `.xmp`, or `dry-run`), errors, and run context. On resume, successful rows and definitive skips such as missing dates in filenames are skipped; failed metadata writes are retried.
+
+Generated XMP sidecars use the full media filename plus `.xmp`, for example `2026-03-02T03-20-52.AVI.xmp`.
+
+If a media filename does not contain a date, `write_dates.py` can read a date from an associated sidecar such as `file.ext.xmp`, `file.xmp`, or preserved XML metadata. If the filename already contains a date and an associated sidecar has the same date with a timezone offset, the filename remains the source of truth and the offset is still preserved.
+
+When an offset is available, the local time is written and the offset is written separately where supported. The script does not convert dates to UTC.
+
+Dry-run rows are logged, but they are not treated as completed for later non-dry-run resumes.
+
+Useful CSV columns:
+
+- `source`: file path being updated
+- `date`: local date written, formatted as `YYYY-MM-DD HH:mm:ss`
+- `date_offset`: timezone offset found in a sidecar, if available
+- `date_source`: `filename`, `sidecar:...`, or `filename+sidecar:...`
+- `metadata_ok`: `True` when metadata writing finished successfully
+- `write_target`: `embedded`, generated `.xmp`, or `dry-run`
+- `error`: empty for success; otherwise contains skip/error detail
 
 ### `copy_icloud.py`
 
@@ -133,6 +255,8 @@ Important CSV columns:
 - `run_resume_csv`: CSV used as the resume source for that row's run
 - `run_interrupted`: whether that row's run ended after interruption
 
+Generated XMP sidecars use the full copied media filename plus `.xmp`, for example `2026-03-02T03-20-52.AVI.xmp`.
+
 During processing, a copied file may temporarily appear as:
 
 ```text
@@ -146,6 +270,21 @@ This protects long runs from power loss: if a file was copied but metadata had n
 Rows with copy or metadata errors are retried automatically when using `--resume-csv`. Rows that completed successfully, were outside the date range, were not media, or had no Shell date are skipped on resume.
 
 If date filters change when resuming, rows that were previously skipped as `outside date range` are reevaluated with the new effective filter.
+
+## Logging and resume behavior
+
+`copy_icloud.py`, `rename_media.py`, and `write_dates.py` share the same logging model:
+
+- every run writes a CSV log and a TXT summary log
+- logs are named with the run start time
+- logs go to `.\logs` by default and can be changed with `--log-path`
+- CSV logs are the source of truth for resume
+- TXT logs contain run summary counts, start/end time, interruption state, and the effective command
+- periodic checkpoint CSVs are written during long runs
+- checkpoint CSVs can be passed to `--resume-csv` after a power loss
+- final CSV/TXT logs remove the checkpoint after normal completion or `Ctrl + C`
+
+Use the most recent CSV log when resuming. Each new resume CSV includes accumulated rows from the previous CSV plus newly processed rows, so the newest CSV becomes the next resume point.
 
 ## Requirements
 

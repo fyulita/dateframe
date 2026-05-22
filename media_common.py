@@ -116,6 +116,12 @@ def releaseReservedPath(path, reservedPaths, lock):
         reservedPaths.discard(str(path).lower())
 
 
+def sidecarPathFor(path, sidecarExt=".xmp"):
+    sidecarExt = sidecarExt if str(sidecarExt).startswith(".") else f".{sidecarExt}"
+
+    return Path(str(path) + sidecarExt)
+
+
 # ----------------------
 # File iteration helpers
 # ----------------------
@@ -317,10 +323,13 @@ def runParallel(paths, workerFn, maxWorkers=None, stopEvent=None, onError=None):
                 raise
 
     except KeyboardInterrupt:
+        if stopEvent:
+            stopEvent.set()
+
         for fut in futures:
             fut.cancel()
 
-        ex.shutdown(wait=False, cancel_futures=True)
+        ex.shutdown(wait=True, cancel_futures=True)
         raise
 
     else:
@@ -417,6 +426,11 @@ def runExiftool(
                 print(out)
 
     if returnStderr:
-        return proc.returncode, (proc.stderr or "").strip()
+        detail = (proc.stderr or "").strip()
+
+        if proc.returncode != 0 and not detail:
+            detail = (proc.stdout or "").strip()
+
+        return proc.returncode, detail
 
     return proc.returncode
