@@ -7,7 +7,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from media_common import (
+from media_tools.media_common import (
     UNSUPPORTED_EMBED_WRITE,
     datetimeToExiftool,
     isImage,
@@ -15,7 +15,7 @@ from media_common import (
     runExiftool,
     sidecarPathFor,
 )
-from windows_metadata import cleanShellValue, parseWindowsShellDate
+from media_tools.windows_metadata import cleanShellValue, parseWindowsShellDate
 
 
 SHELL_TO_EXIFTOOL_IMAGE = {

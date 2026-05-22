@@ -6,7 +6,7 @@ import datetime
 import os
 from pathlib import Path
 
-from media_common import resolvePath, saveSimpleLog, timestampedName
+from media_tools.media_common import resolvePath, saveSimpleLog, timestampedName
 
 
 CSV_FIELDS = ["source", "dest", "date", "copied_ok", "metadata_ok", "error"]

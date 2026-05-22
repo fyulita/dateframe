@@ -6,8 +6,8 @@ import datetime
 from dataclasses import dataclass
 from typing import Optional
 
-from media_common import positiveInt, resolvePath
-from media_logging import metadataBool, metadataFloat, metadataInt
+from media_tools.media_common import positiveInt, resolvePath
+from media_tools.media_logging import metadataBool, metadataFloat, metadataInt
 
 
 @dataclass

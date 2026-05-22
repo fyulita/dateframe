@@ -6,7 +6,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
 
-from media_common import sidecarPathFor
+from media_tools.media_common import sidecarPathFor
 
 
 DATETIME_RE = re.compile(

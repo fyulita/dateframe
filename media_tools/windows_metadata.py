@@ -3,7 +3,7 @@
 
 import datetime
 
-from media_common import isVideo
+from media_tools.media_common import isVideo
 
 try:
     import pythoncom

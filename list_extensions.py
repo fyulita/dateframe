@@ -5,7 +5,7 @@ import sys
 import argparse
 from collections import Counter
 
-from media_common import iterFiles, resolvePath
+from media_tools.media_common import iterFiles, resolvePath
 
 
 def parseArgs():

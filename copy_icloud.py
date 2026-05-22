@@ -8,14 +8,14 @@ import shutil
 import threading
 from pathlib import Path
 
-from copy_icloud_config import (
+from media_tools.copy_icloud_config import (
     CopyOptions,
     ResumeState,
     applyRunDefaults,
     buildRunContext,
     parseArgs,
 )
-from media_common import (
+from media_tools.media_common import (
     BaseStats,
     datetimeToExiftool,
     datetimeToFilename,
@@ -32,7 +32,7 @@ from media_common import (
     resolvePath,
     runParallel,
 )
-from media_logging import (
+from media_tools.media_logging import (
     completedIcloudSourcesFromRows,
     loadResumeCopiedDestinations,
     loadResumeSources,
@@ -42,12 +42,12 @@ from media_logging import (
     runCheckpointLoop,
     saveRunLog,
 )
-from metadata_writer import (
+from media_tools.metadata_writer import (
     verifyWrittenDate,
     writeEmbeddedMetadata,
     writeXmpSidecar,
 )
-from windows_metadata import (
+from media_tools.windows_metadata import (
     WINDOWS_SHELL_AVAILABLE,
     getAllShellMetadata,
     getShellDate,

@@ -2,6 +2,8 @@
 
 Python scripts for inspecting metadata of media files, renaming photos and videos using their real capture date, writing dates back into file metadata, and copying media from iCloud Photos on Windows.
 
+The scripts intended to be run directly live at the repository root. Shared implementation modules live in `media_tools/`.
+
 ## Included scripts
 
 ### `list_extensions.py`

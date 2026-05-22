@@ -16,8 +16,8 @@ import wand.image as wand
 from PIL import ExifTags, Image, UnidentifiedImageError
 from wand.exceptions import CorruptImageWarning
 
-from capture_dates import captureDateFromAssociatedSidecars
-from media_common import (
+from media_tools.capture_dates import captureDateFromAssociatedSidecars
+from media_tools.media_common import (
     BaseStats,
     isImage,
     isSubpath,
@@ -29,7 +29,7 @@ from media_common import (
     runParallel,
     sidecarPathFor,
 )
-from media_logging import (
+from media_tools.media_logging import (
     loadResumeRows,
     logPaths,
     metadataBool,

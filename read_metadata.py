@@ -12,8 +12,8 @@ import wand.image as wand
 from PIL import Image, ExifTags
 import ffmpeg
 
-from capture_dates import associatedSidecarPaths, captureDateFromAssociatedSidecars, captureDateFromXml
-from media_common import resolvePath
+from media_tools.capture_dates import associatedSidecarPaths, captureDateFromAssociatedSidecars, captureDateFromXml
+from media_tools.media_common import resolvePath
 
 
 IS_WINDOWS = platform.system() == "Windows"

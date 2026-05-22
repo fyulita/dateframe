@@ -6,8 +6,8 @@ import datetime
 import sys
 import threading
 
-from capture_dates import CaptureDate, captureDateFromAssociatedSidecars, exiftoolDateWithOffset, offsetTags, parseCaptureDate
-from media_common import (
+from media_tools.capture_dates import CaptureDate, captureDateFromAssociatedSidecars, exiftoolDateWithOffset, offsetTags, parseCaptureDate
+from media_tools.media_common import (
     BaseStats,
     UNSUPPORTED_EMBED_WRITE,
     isImage,
@@ -19,7 +19,7 @@ from media_common import (
     runParallel,
     sidecarPathFor,
 )
-from media_logging import (
+from media_tools.media_logging import (
     loadResumeRows,
     logPaths,
     metadataBool,
