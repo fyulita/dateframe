@@ -1,19 +1,12 @@
 # rename-media
 
-Python scripts for inspecting metadata, renaming photos and videos using their real capture date, writing dates back into file metadata, and copying media from iCloud Photos on Windows.
+Python scripts for inspecting metadata of media files, renaming photos and videos using their real capture date, writing dates back into file metadata, and copying media from iCloud Photos on Windows.
 
 ## Included scripts
 
-### `media_common.py`
+### `list_extensions.py`
 
-Shared helpers used by the main scripts.
-
-- shared image/video extension sets
-- media type helpers
-- shared path and date helpers
-- shared ExifTool runner
-- shared parallel helpers
-- base stats helper
+Lists file extensions found in a folder. Useful for quickly checking which file types exist before processing them.
 
 ### `read_metadata.py`
 
@@ -34,6 +27,7 @@ Copies or moves media files from a source folder to a destination folder and ren
 - uses `ffmpeg` for videos
 - can use Windows file dates as a fallback with `--windows`
 - uses `shutil.copy2` when copying, to preserve file metadata
+- keeps folder structure with `--keep-structure`
 
 ### `write_dates.py`
 
@@ -58,12 +52,101 @@ It depends on Windows Shell / COM metadata through `pywin32`, so it is not expec
 - can skip embedded metadata entirely with `--no-metadata`
 - can verify written date metadata with `--verify`
 - can skip video metadata writing with `--skip-video-metadata`
-- can write a CSV result log with `--csv-log`
+- always writes a CSV log that can be used to resume later
+- writes a TXT summary log
+- writes periodic checkpoint CSVs during long runs
 - limits concurrent iCloud downloads with `--copy-workers` to avoid overloading iCloud
 
-### `list_extensions.py`
+Basic usage:
 
-Lists file extensions found in a folder. Useful for quickly checking which file types exist before processing them.
+```powershell
+python copy_icloud.py "C:\Users\You\Pictures\iCloud Photos\Photos" "C:\Users\You\Pictures\iCloud Renamed"
+```
+
+Date filter usage:
+
+```powershell
+python copy_icloud.py --from-date 2020-01-01 --to-date 2020-12-31 "C:\Users\You\Pictures\iCloud Photos\Photos" "C:\Users\You\Pictures\iCloud Renamed"
+```
+
+Low-resource usage:
+
+```powershell
+python copy_icloud.py --workers 2 --copy-workers 1 --checkpoint-seconds 300 --quiet "C:\Users\You\Pictures\iCloud Photos\Photos" "C:\Users\You\Pictures\iCloud Renamed"
+```
+
+TXT input list usage:
+
+```powershell
+python copy_icloud.py --input-txt ".\files-to-process.txt" "D:\Media\Pictures\iCloud"
+```
+
+When `--input-txt` is used, each non-empty, non-comment line is treated as one source file path. Date filters still apply.
+
+Resume from the latest CSV log:
+
+```powershell
+python copy_icloud.py --resume-csv ".\logs\copy_icloud_2026-05-21T22-54-12.csv"
+```
+
+Resume from a checkpoint after a power loss:
+
+```powershell
+python copy_icloud.py --resume-csv ".\logs\copy_icloud_2026-05-21T22-54-12_checkpoint.csv"
+```
+
+When resuming, `src` and `dest` can be omitted if the CSV includes run context. You can still override operational flags such as `--workers`, `--copy-workers`, `--exiftool`, `--write-xmp`, `--no-metadata`, `--verify`, and `--quiet`.
+
+Date filters saved in the resume CSV are reused by default. Passing new `--from-date` or `--to-date` values overrides the saved filters. Use `--clear-date-filter` to remove saved date filters when resuming.
+
+
+#### `copy_icloud.py` logs
+
+By default logs are written to `.\logs`. Change this with `--log-path`.
+
+Each run writes:
+
+- `copy_icloud_<start-time>.csv`: main log and resume source
+- `copy_icloud_<start-time>.txt`: summary log
+
+During a running operation, the script also writes:
+
+- `copy_icloud_<start-time>_checkpoint.csv`
+
+The checkpoint CSV is overwritten periodically according to `--checkpoint-seconds` and contains the accumulated history up to the last checkpoint. It is useful if the computer loses power or the process ends instantly before the final logs are written.
+
+If the run ends normally or with `Ctrl + C`, the final CSV/TXT logs are written and the checkpoint file is removed.
+
+The checkpoint CSV includes one extra column:
+
+- `run_checkpoint_at`: timestamp of the checkpoint write
+
+The final CSV does not include `run_checkpoint_at`.
+
+Important CSV columns:
+
+- `source`: original file path
+- `dest`: copied destination path, when a copy exists
+- `date`: Windows Shell date used for naming and metadata
+- `copied_ok`: `True` if the file was copied; empty for non-copy skips such as date filters or missing Shell date
+- `metadata_ok`: `True` if embedded metadata finished successfully, `False` if metadata failed, empty when metadata was intentionally skipped
+- `error`: empty for success; otherwise contains the skip/error reason
+- `run_resume_csv`: CSV used as the resume source for that row's run
+- `run_interrupted`: whether that row's run ended after interruption
+
+During processing, a copied file may temporarily appear as:
+
+```text
+copied_ok=True
+metadata_ok=False
+error=metadata pending
+```
+
+This protects long runs from power loss: if a file was copied but metadata had not finished yet, a later resume can retry metadata on the already-copied destination instead of copying the file again.
+
+Rows with copy or metadata errors are retried automatically when using `--resume-csv`. Rows that completed successfully, were outside the date range, were not media, or had no Shell date are skipped on resume.
+
+If date filters change when resuming, rows that were previously skipped as `outside date range` are reevaluated with the new effective filter.
 
 ## Requirements
 
@@ -139,6 +222,7 @@ pip install -r requirements.txt
 
 Notes:
 
+- If you only use `copy_icloud.py`, you need Python, `pywin32`, and `ExifTool`. `ffmpeg` and ImageMagick are used by the other scripts.
 - `pywin32` is required for `copy_icloud.py` and is only available on Windows
 - `Wand` requires ImageMagick to already be installed
 - `ffmpeg-python` is only a wrapper and does not replace the `ffmpeg` binaries

@@ -2,27 +2,21 @@
 # copy_icloud.py
 
 import sys
-import re
-import html
 import time
-import csv
 import datetime
 import shutil
-import argparse
 import threading
-import subprocess
 from pathlib import Path
 
-try:
-    import pythoncom
-    from win32com.client import Dispatch
-except ImportError:
-    pythoncom = None
-    Dispatch = None
-
+from copy_icloud_config import (
+    CopyOptions,
+    ResumeState,
+    applyRunDefaults,
+    buildRunContext,
+    parseArgs,
+)
 from media_common import (
     BaseStats,
-    UNSUPPORTED_EMBED_WRITE,
     datetimeToExiftool,
     datetimeToFilename,
     inDateRange,
@@ -32,53 +26,34 @@ from media_common import (
     isVideo,
     iterFiles,
     parseOptionalDateRange,
-    positiveInt,
     relDirFor,
     releaseReservedPath,
     reserveUniquePath,
     resolvePath,
-    runExiftool,
     runParallel,
-    savePathList,
-    saveSimpleLog,
-    timestampedName,
 )
-
-
-# ----------------------
-# Config / constants
-# ----------------------
-
-WINDOWS_SHELL_AVAILABLE = pythoncom is not None and Dispatch is not None
-
-DATE_COLUMNS_IMAGE = ["Date taken", "Media created", "Date acquired", "Content created"]
-DATE_COLUMNS_VIDEO = ["Media created", "Date taken", "Date acquired", "Content created"]
-
-SHELL_TO_EXIFTOOL_IMAGE = {
-    "Date taken": ["EXIF:DateTimeOriginal", "EXIF:CreateDate", "XMP:DateTimeOriginal", "XMP:CreateDate"],
-    "Camera maker": ["EXIF:Make", "XMP:Make"],
-    "Camera model": ["EXIF:Model", "XMP:Model"],
-    "Authors": ["XMP:Creator"],
-    "Title": ["XMP:Title"],
-    "Subject": ["XMP:Subject"],
-    "Tags": ["XMP:Subject"],
-    "Comments": ["EXIF:UserComment", "XMP:Description"],
-}
-
-SHELL_TO_EXIFTOOL_VIDEO = {
-    "Date taken": ["QuickTime:CreateDate", "QuickTime:TrackCreateDate", "QuickTime:MediaCreateDate", "XMP:CreateDate"],
-    "Media created": ["QuickTime:CreateDate", "QuickTime:TrackCreateDate", "QuickTime:MediaCreateDate", "XMP:CreateDate"],
-    "Camera maker": ["Keys:Make", "XMP:Make"],
-    "Camera model": ["Keys:Model", "XMP:Model"],
-    "Title": ["XMP:Title"],
-    "Subject": ["XMP:Subject"],
-    "Tags": ["XMP:Subject"],
-    "Comments": ["XMP:Description"],
-}
-
-VERIFY_TAGS_IMAGE = ["EXIF:DateTimeOriginal", "EXIF:CreateDate", "XMP:DateTimeOriginal", "XMP:CreateDate"]
-VERIFY_TAGS_VIDEO = ["QuickTime:CreateDate", "QuickTime:TrackCreateDate", "QuickTime:MediaCreateDate", "XMP:CreateDate"]
-VERIFY_TAGS_XMP = ["XMP:DateTimeOriginal", "XMP:CreateDate", "XMP:ModifyDate"]
+from media_logging import (
+    completedSourcesFromRows,
+    loadResumeCopiedDestinations,
+    loadResumeSources,
+    logPaths,
+    pathKey,
+    removeCheckpoint,
+    runCheckpointLoop,
+    saveRunLog,
+)
+from metadata_writer import (
+    verifyWrittenDate,
+    writeEmbeddedMetadata,
+    writeXmpSidecar,
+)
+from windows_metadata import (
+    WINDOWS_SHELL_AVAILABLE,
+    getAllShellMetadata,
+    getShellDate,
+    initializeCom,
+    uninitializeCom,
+)
 
 filenameLock = threading.Lock()
 printLock = threading.Lock()
@@ -98,6 +73,8 @@ class Stats(BaseStats):
         self.metadataErroredSources = set()
         self.otherErroredFiles = set()
         self.csvRows = []
+        self.csvRowIndexBySource = {}
+        self.previousCsvRows = []
 
     def addCopied(self, filename):
         path = Path(filename)
@@ -150,436 +127,38 @@ class Stats(BaseStats):
                 self.otherErroredFiles.add(sourcePath)
 
     def addCsvRow(self, source, dest, dateValue, copiedOk, metadataOk, error):
+        source = str(source)
+        sourceKey = pathKey(source)
+        row = {
+            "source": source,
+            "dest": "" if dest is None else str(dest),
+            "date": "" if dateValue is None else str(dateValue),
+            "copied_ok": copiedOk,
+            "metadata_ok": metadataOk,
+            "error": error,
+        }
+
         with self.lock:
-            self.csvRows.append({
-                "source": str(source),
-                "dest": "" if dest is None else str(dest),
-                "date": "" if dateValue is None else str(dateValue),
-                "copied_ok": copiedOk,
-                "metadata_ok": metadataOk,
-                "error": error,
-            })
+            existingIndex = self.csvRowIndexBySource.get(sourceKey)
+
+            if existingIndex is not None:
+                self.csvRows[existingIndex] = row
+                return
+
+            self.csvRowIndexBySource[sourceKey] = len(self.csvRows)
+            self.csvRows.append(row)
 
     def getCsvRows(self):
         with self.lock:
             return list(self.csvRows)
 
-
-# ----------------------
-# Logging
-# ----------------------
-
-def saveCsvLog(stats, csvPath):
-    rows = stats.getCsvRows()
-
-    with open(csvPath, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(
-            f,
-            fieldnames=["source", "dest", "date", "copied_ok", "metadata_ok", "error"],
-        )
-        writer.writeheader()
-        writer.writerows(rows)
-
-    print(f"CSV log saved to {csvPath}")
-
-
-def saveLog(stats, csvLogPath=None):
-    logName = timestampedName("copy_icloud")
-    retryName = timestampedName("failed_paths")
-    copyRetryName = timestampedName("copy_failed_paths")
-    metadataRetryName = timestampedName("metadata_failed_paths")
-
-    data = stats.summary()
-    lines = [
-        f"processed_images: {data.get('processed_images', 0)}",
-        f"processed_videos: {data.get('processed_videos', 0)}",
-        f"copied_images: {data.get('copied_images', 0)}",
-        f"copied_videos: {data.get('copied_videos', 0)}",
-        f"copy_errored_images: {data.get('copy_errored_images', 0)}",
-        f"copy_errored_videos: {data.get('copy_errored_videos', 0)}",
-        f"metadata_written_images: {data.get('metadata_written_images', 0)}",
-        f"metadata_written_videos: {data.get('metadata_written_videos', 0)}",
-        f"metadata_errored_images: {data.get('metadata_errored_images', 0)}",
-        f"metadata_errored_videos: {data.get('metadata_errored_videos', 0)}",
-        "",
-        f"metadata_skipped_disabled: {data.get('metadata_skipped_disabled', 0)}",
-        f"metadata_skipped_videos: {data.get('metadata_skipped_videos', 0)}",
-        f"metadata_verified: {data.get('metadata_verified', 0)}",
-        f"metadata_verify_failed: {data.get('metadata_verify_failed', 0)}",
-        f"xmp_sidecars_written: {data.get('xmp_sidecars_written', 0)}",
-        f"xmp_sidecar_errors: {data.get('xmp_sidecar_errors', 0)}",
-        "",
-        f"skipped_not_media: {data.get('skipped_not_media', 0)}",
-        f"skipped_no_date: {data.get('skipped_no_date', 0)}",
-        f"skipped_outside_date_range: {data.get('skipped_outside_date_range', 0)}",
-        f"copy_retries: {data.get('copy_retries', 0)}",
-        f"exiftool_timeouts: {data.get('exiftool_timeouts', 0)}",
-        f"exiftool_errors: {data.get('exiftool_errors', 0)}",
-        f"tmp_removed: {data.get('tmp_removed', 0)}",
-    ]
-
-    if stats.copyErroredSources:
-        lines.append("")
-        lines.append("Copy errored source paths:")
-        lines.extend(sorted(stats.copyErroredSources))
-
-    if stats.metadataErroredSources:
-        lines.append("")
-        lines.append("Metadata errored source paths:")
-        lines.extend(sorted(stats.metadataErroredSources))
-
-    if stats.otherErroredFiles:
-        lines.append("")
-        lines.append("Other errored files:")
-        lines.extend(sorted(stats.otherErroredFiles))
-
-    saveSimpleLog(lines, logName)
-
-    failedPaths = set(stats.copyErroredSources) | set(stats.metadataErroredSources)
-
-    if failedPaths:
-        savePathList(failedPaths, retryName)
-        print(f"Retry list saved to {retryName}")
-
-    if stats.copyErroredSources:
-        savePathList(stats.copyErroredSources, copyRetryName)
-        print(f"Copy retry list saved to {copyRetryName}")
-
-    if stats.metadataErroredSources:
-        savePathList(stats.metadataErroredSources, metadataRetryName)
-        print(f"Metadata retry list saved to {metadataRetryName}")
-
-    if csvLogPath:
-        if csvLogPath == "auto":
-            csvLogPath = timestampedName("copy_icloud", ext="csv")
-        saveCsvLog(stats, csvLogPath)
-
-
-# ----------------------
-# CLI
-# ----------------------
-
-def parseArgs():
-    parser = argparse.ArgumentParser(
-        description="Copy iCloud media preserving Shell metadata and writing mappable metadata into files."
-    )
-    parser.add_argument("src", help="iCloud Photos source file/folder, or .txt file if --input-txt is used.")
-    parser.add_argument("dest", help="Destination folder.")
-
-    parser.add_argument("--input-txt", action="store_true", help="Treat src as a .txt file containing one media path per line.")
-    parser.add_argument("--from-date", help="Start date inclusive. Format: YYYY-MM-DD.")
-    parser.add_argument("--to-date", help="End date inclusive. Format: YYYY-MM-DD.")
-
-    parser.add_argument("-r", "--recursive", action="store_true", help="Process recursively when src is a folder.")
-    parser.add_argument("-k", "--keep-structure", action="store_true", help="Keep source subfolders inside dest. Requires -r and folder src.")
-
-    parser.add_argument("--workers", type=positiveInt, default=8, help="General worker threads. Default: 8.")
-    parser.add_argument("--copy-workers", type=positiveInt, default=2, help="Concurrent iCloud copy/download operations. Default: 2.")
-    parser.add_argument("--copy-retries", type=positiveInt, default=5, help="Retries for iCloud copy timeout errors. Default: 5.")
-    parser.add_argument("--copy-retry-delay", type=float, default=3.0, help="Base retry delay in seconds. Default: 3.")
-
-    parser.add_argument("--timeout", type=positiveInt, default=120, help="ExifTool timeout per file in seconds. Default: 120.")
-    parser.add_argument("--date-order", choices=["dmy", "mdy"], default="dmy", help="Ambiguous Shell date order. Default: dmy.")
-    parser.add_argument("--exiftool", default="exiftool", help="ExifTool executable path. Default: exiftool.")
-    parser.add_argument("--write-xmp", action="store_true", help="Write Windows Shell metadata to .xmp sidecar files.")
-    parser.add_argument("--no-metadata", action="store_true", help="Copy files without writing embedded metadata with ExifTool.")
-    parser.add_argument("--verify", action="store_true", help="Verify that the destination metadata contains the expected date after writing.")
-    parser.add_argument("--skip-video-metadata", action="store_true", help="Skip embedded metadata writing for video files.")
-    parser.add_argument("--csv-log", nargs="?", const="auto", help="Write an optional CSV log. Pass a path or omit the value for an auto-generated name.")
-
-    return parser.parse_args()
-
-
-# ----------------------
-# Windows Shell metadata
-# ----------------------
-
-def cleanShellValue(value):
-    if value is None:
-        return ""
-
-    value = str(value).strip()
-    value = value.replace("\u200e", "").replace("\u200f", "")
-    value = value.replace("\u202a", "").replace("\u202c", "")
-
-    return value.strip()
-
-
-def parseWindowsShellDate(value, dateOrder="dmy"):
-    value = cleanShellValue(value)
-
-    if not value:
-        return None
-
-    commonFormats = [
-        "%Y-%m-%d %H:%M:%S",
-        "%Y-%m-%d %H:%M",
-        "%Y:%m:%d %H:%M:%S",
-        "%Y:%m:%d %H:%M",
-    ]
-
-    dmyFormats = [
-        "%d/%m/%Y %H:%M:%S",
-        "%d/%m/%Y %H:%M",
-        "%d/%m/%Y %I:%M:%S %p",
-        "%d/%m/%Y %I:%M %p",
-    ]
-
-    mdyFormats = [
-        "%m/%d/%Y %H:%M:%S",
-        "%m/%d/%Y %H:%M",
-        "%m/%d/%Y %I:%M:%S %p",
-        "%m/%d/%Y %I:%M %p",
-    ]
-
-    formats = commonFormats + (dmyFormats + mdyFormats if dateOrder == "dmy" else mdyFormats + dmyFormats)
-
-    for fmt in formats:
-        try:
-            return datetime.datetime.strptime(value, fmt)
-        except ValueError:
-            pass
-
-    return None
-
-
-def getShellNamespaceAndItem(path):
-    if not WINDOWS_SHELL_AVAILABLE:
-        return None, None
-
-    shell = Dispatch("Shell.Application")
-    namespace = shell.Namespace(str(path.parent))
-
-    if namespace is None:
-        return None, None
-
-    item = namespace.ParseName(path.name)
-    if item is None:
-        return namespace, None
-
-    return namespace, item
-
-
-def getShellDate(path, dateOrder):
-    namespace, item = getShellNamespaceAndItem(path)
-
-    if namespace is None or item is None:
-        return None, None
-
-    wantedColumns = DATE_COLUMNS_VIDEO if isVideo(path) else DATE_COLUMNS_IMAGE
-
-    for column in wantedColumns:
-        for index in range(0, 400):
-            columnName = cleanShellValue(namespace.GetDetailsOf(None, index))
-
-            if columnName != column:
-                continue
-
-            value = cleanShellValue(namespace.GetDetailsOf(item, index))
-            parsed = parseWindowsShellDate(value, dateOrder=dateOrder)
-
-            if parsed:
-                return parsed, column
-
-    return None, None
-
-
-def getAllShellMetadata(path):
-    namespace, item = getShellNamespaceAndItem(path)
-
-    if namespace is None or item is None:
-        return {}
-
-    metadata = {}
-
-    for index in range(0, 400):
-        columnName = cleanShellValue(namespace.GetDetailsOf(None, index))
-        value = cleanShellValue(namespace.GetDetailsOf(item, index))
-
-        if columnName and value:
-            metadata[columnName] = value
-
-    return metadata
-
-
-# ----------------------
-# XMP sidecar writer
-# ----------------------
-
-def sanitizeXmlName(name):
-    name = re.sub(r"[^A-Za-z0-9_]+", "_", name.strip())
-    name = name.strip("_")
-
-    if not name:
-        name = "Field"
-
-    if name[0].isdigit():
-        name = "_" + name
-
-    return name
-
-
-def buildXmpSidecarContent(sourcePath, copiedPath, metadata):
-    lines = [
-        '<?xml version="1.0" encoding="UTF-8"?>',
-        '<x:xmpmeta xmlns:x="adobe:ns:meta/">',
-        '  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">',
-        '    <rdf:Description',
-        '      xmlns:icloud="https://example.local/icloud-shell/1.0/"',
-        '      rdf:about="">',
-        f'      <icloud:OriginalPath>{html.escape(str(sourcePath))}</icloud:OriginalPath>',
-        f'      <icloud:CopiedPath>{html.escape(str(copiedPath))}</icloud:CopiedPath>',
-    ]
-
-    for key in sorted(metadata.keys()):
-        value = metadata[key]
-        tag = sanitizeXmlName(key)
-        lines.append(f'      <icloud:{tag}>{html.escape(str(value))}</icloud:{tag}>')
-
-    lines.extend([
-        '    </rdf:Description>',
-        '  </rdf:RDF>',
-        '</x:xmpmeta>',
-        "",
-    ])
-
-    return "\n".join(lines)
-
-
-def writeXmpSidecar(sourcePath, copiedPath, metadata):
-    xmpPath = Path(str(copiedPath) + ".xmp")
-    content = buildXmpSidecarContent(sourcePath, copiedPath, metadata)
-
-    with open(xmpPath, "w", encoding="utf-8") as f:
-        f.write(content)
-
-    return xmpPath
-
-
-# ----------------------
-# ExifTool helpers
-# ----------------------
-
-def shellDateToExiftoolValue(value, dateOrder):
-    parsed = parseWindowsShellDate(value, dateOrder=dateOrder)
-
-    if not parsed:
-        return None
-
-    return datetimeToExiftool(parsed)
-
-
-def buildMappedTags(metadata, isImg, dateOrder):
-    tags = []
-    mapping = SHELL_TO_EXIFTOOL_IMAGE if isImg else SHELL_TO_EXIFTOOL_VIDEO
-
-    def put(tag, value):
-        if value:
-            tags.append(f"-{tag}={value}")
-
-    for shellKey, exiftoolTags in mapping.items():
-        if shellKey not in metadata:
-            continue
-
-        value = cleanShellValue(metadata[shellKey])
-        if not value:
-            continue
-
-        if "date" in shellKey.lower() or "created" in shellKey.lower():
-            value = shellDateToExiftoolValue(value, dateOrder)
-            if not value:
-                continue
-
-        for tag in exiftoolTags:
-            put(tag, value)
-
-    return tags
-
-
-def writeEmbeddedMetadata(copiedPath, metadata, timeout, dateOrder, exiftoolPath, stats):
-    path = Path(copiedPath)
-    isImg = isImage(path)
-    isVid = isVideo(path)
-
-    if not (isImg or isVid):
-        return 1
-
-    tags = buildMappedTags(metadata=metadata, isImg=isImg, dateOrder=dateOrder)
-
-    if not tags:
-        return 0
-
-    if path.suffix.lower() in UNSUPPORTED_EMBED_WRITE:
-        argsList = tags + ["-o", "%d%f.xmp", str(path)]
-    else:
-        argsList = tags + [str(path)]
-
-    return runExiftool(
-        exiftoolPath=exiftoolPath,
-        argsList=argsList,
-        timeout=timeout,
-        printLock=printLock,
-        targetPath=path,
-        stats=stats,
-        stopEvent=stopEvent,
-    )
-
-
-def readExiftoolTagValues(targetPath, tags, exiftoolPath, timeout):
-    cmd = [exiftoolPath, "-s3"] + [f"-{tag}" for tag in tags] + [str(targetPath)]
-
-    try:
-        proc = subprocess.run(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=timeout,
-        )
-    except subprocess.TimeoutExpired:
-        return 124, []
-
-    if proc.returncode != 0:
-        with printLock:
-            if proc.stderr:
-                sys.stderr.write(proc.stderr.strip() + "\n")
-        return proc.returncode, []
-
-    values = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
-    return 0, values
-
-
-def verifyWrittenDate(copiedPath, expectedDate, exiftoolPath, timeout):
-    path = Path(copiedPath)
-
-    if path.suffix.lower() in UNSUPPORTED_EMBED_WRITE:
-        targetPath = path.with_suffix(".xmp")
-        tags = VERIFY_TAGS_XMP
-    elif isImage(path):
-        targetPath = path
-        tags = VERIFY_TAGS_IMAGE
-    else:
-        targetPath = path
-        tags = VERIFY_TAGS_VIDEO
-
-    if not targetPath.exists():
-        return False, "verify target missing"
-
-    rc, values = readExiftoolTagValues(targetPath, tags, exiftoolPath, timeout)
-
-    if rc == 124:
-        return False, "verify timeout"
-
-    if rc != 0:
-        return False, "verify exiftool error"
-
-    expected = expectedDate.strip()
-
-    for value in values:
-        if value.strip() == expected:
-            return True, ""
-
-    return False, "expected date not found after write"
+    def setPreviousCsvRows(self, rows):
+        with self.lock:
+            self.previousCsvRows = list(rows)
+
+    def getPreviousCsvRows(self):
+        with self.lock:
+            return list(self.previousCsvRows)
 
 
 # ----------------------
@@ -636,25 +215,21 @@ def copyWithRetry(src, dest, stats, retries=5, delay=3.0):
 def copyIcloudMedia(
     src,
     dest,
-    recursive,
-    keepStructure,
-    inputTxt,
-    fromDate,
-    toDate,
-    dateOrder,
-    exiftoolPath,
-    writeXmp,
-    noMetadata,
-    verify,
-    skipVideoMetadata,
+    options,
+    resumeState,
     stats,
-    timeout=120,
-    maxWorkers=8,
-    copyRetries=5,
-    copyRetryDelay=3.0,
 ):
-    files = list(iterFiles(src, recursive, inputTxt=inputTxt, printLock=printLock))
-    srcMode = "txt" if inputTxt else ("file" if src.is_file() else "folder")
+    files = list(iterFiles(src, options.recursive, inputTxt=options.inputTxt, printLock=printLock))
+    srcMode = "txt" if options.inputTxt else ("file" if src.is_file() else "folder")
+
+    if resumeState.completedSources:
+        beforeCount = len(files)
+        files = [path for path in files if pathKey(path) not in resumeState.completedSources]
+        skippedCount = beforeCount - len(files)
+        stats.inc("skipped_resume_completed", skippedCount)
+
+        with printLock:
+            print(f"[RESUME] skipped already completed sources: {skippedCount}")
 
     def worker(path):
         processOne(
@@ -662,19 +237,9 @@ def copyIcloudMedia(
             src=src,
             srcMode=srcMode,
             dest=dest,
-            keepStructure=keepStructure,
-            fromDate=fromDate,
-            toDate=toDate,
-            dateOrder=dateOrder,
-            exiftoolPath=exiftoolPath,
-            writeXmp=writeXmp,
-            noMetadata=noMetadata,
-            verify=verify,
-            skipVideoMetadata=skipVideoMetadata,
+            options=options,
+            resumeCopiedPath=resumeState.copiedDestinations.get(pathKey(path)),
             stats=stats,
-            timeout=timeout,
-            copyRetries=copyRetries,
-            copyRetryDelay=copyRetryDelay,
         )
 
     def onError(path, error):
@@ -688,7 +253,7 @@ def copyIcloudMedia(
     runParallel(
         files,
         workerFn=worker,
-        maxWorkers=maxWorkers,
+        maxWorkers=options.maxWorkers,
         stopEvent=stopEvent,
         onError=onError,
     )
@@ -699,24 +264,14 @@ def processOne(
     src,
     srcMode,
     dest,
-    keepStructure,
-    fromDate,
-    toDate,
-    dateOrder,
-    exiftoolPath,
-    writeXmp,
-    noMetadata,
-    verify,
-    skipVideoMetadata,
+    options,
     stats,
-    timeout=120,
-    copyRetries=5,
-    copyRetryDelay=3.0,
+    resumeCopiedPath=None,
 ):
     if not WINDOWS_SHELL_AVAILABLE:
         raise RuntimeError("copy_icloud.py requires Windows Shell support (pywin32) and only works on Windows.")
 
-    pythoncom.CoInitialize()
+    initializeCom()
 
     outPath = None
     shellDate = None
@@ -728,19 +283,19 @@ def processOne(
 
         if not isMedia(path):
             stats.inc("skipped_not_media")
-            stats.addCsvRow(path, None, None, False, "", "not media")
+            stats.addCsvRow(path, None, None, "", "", "not media")
             return
 
-        shellDate, shellDateColumn = getShellDate(path, dateOrder=dateOrder)
+        shellDate, shellDateColumn = getShellDate(path, dateOrder=options.dateOrder)
 
         if shellDate is None:
             stats.inc("skipped_no_date")
-            stats.addCsvRow(path, None, None, False, "", "no shell date")
+            stats.addCsvRow(path, None, None, "", "", "no shell date")
             return
 
-        if srcMode == "folder" and not inDateRange(shellDate, fromDate, toDate):
+        if not inDateRange(shellDate, options.fromDate, options.toDate):
             stats.inc("skipped_outside_date_range")
-            stats.addCsvRow(path, None, shellDate, False, "", "outside date range")
+            stats.addCsvRow(path, None, shellDate, "", "", "outside date range")
             return
 
         if isImage(path):
@@ -750,7 +305,7 @@ def processOne(
 
         metadata = getAllShellMetadata(path)
 
-        if keepStructure and srcMode == "folder":
+        if options.keepStructure and srcMode == "folder":
             relDir = relDirFor(str(path), str(src))
             targetDir = dest / relDir if relDir else dest
         else:
@@ -760,41 +315,56 @@ def processOne(
 
         filename = datetimeToFilename(shellDate)
         ext = path.suffix.lower()
-        outPath = reserveUniquePath(filename, ext, str(targetDir), reservedPaths, filenameLock)
+        resumeCopiedPath = Path(resumeCopiedPath) if resumeCopiedPath else None
 
-        try:
-            copyWithRetry(
-                src=path,
-                dest=outPath,
-                stats=stats,
-                retries=copyRetries,
-                delay=copyRetryDelay,
-            )
-            stats.addCopied(str(outPath))
-        except KeyboardInterrupt:
-            stopEvent.set()
-            releaseReservedPath(outPath, reservedPaths, filenameLock)
-            raise
-        except Exception as e:
-            stats.addCopyErrored(str(path))
-            releaseReservedPath(outPath, reservedPaths, filenameLock)
-            stats.addCsvRow(path, outPath, shellDate, False, "", str(e))
+        if resumeCopiedPath and resumeCopiedPath.exists() and resumeCopiedPath.is_file():
+            outPath = resumeCopiedPath
 
-            with printLock:
-                print(f"[COPY ERROR] {path}")
-                print(e)
-                print()
+            if not options.quiet:
+                with printLock:
+                    print("[METADATA RETRY]")
+                    print(f"  DATE: {shellDate} ({shellDateColumn})")
+                    print(f"  FROM: {path}")
+                    print(f"  TO:   {outPath}")
+                    print()
+        else:
+            outPath = reserveUniquePath(filename, ext, str(targetDir), reservedPaths, filenameLock)
 
-            return
+            try:
+                copyWithRetry(
+                    src=path,
+                    dest=outPath,
+                    stats=stats,
+                    retries=options.copyRetries,
+                    delay=options.copyRetryDelay,
+                )
+                stats.addCopied(str(outPath))
+                stats.addCsvRow(path, outPath, shellDate, True, False, "metadata pending")
+            except KeyboardInterrupt:
+                stopEvent.set()
+                releaseReservedPath(outPath, reservedPaths, filenameLock)
+                raise
+            except Exception as e:
+                stats.addCopyErrored(str(path))
+                releaseReservedPath(outPath, reservedPaths, filenameLock)
+                stats.addCsvRow(path, outPath, shellDate, False, "", str(e))
 
-        with printLock:
-            print("[COPY]")
-            print(f"  DATE: {shellDate} ({shellDateColumn})")
-            print(f"  FROM: {path}")
-            print(f"  TO:   {outPath}")
-            print()
+                with printLock:
+                    print(f"[COPY ERROR] {path}")
+                    print(e)
+                    print()
 
-        if writeXmp:
+                return
+
+            if not options.quiet:
+                with printLock:
+                    print("[COPY]")
+                    print(f"  DATE: {shellDate} ({shellDateColumn})")
+                    print(f"  FROM: {path}")
+                    print(f"  TO:   {outPath}")
+                    print()
+
+        if options.writeXmp:
             try:
                 writeXmpSidecar(path, outPath, metadata)
                 stats.inc("xmp_sidecars_written")
@@ -810,25 +380,27 @@ def processOne(
 
                 return
 
-        if noMetadata:
+        if options.noMetadata:
             stats.inc("metadata_skipped_disabled")
             metadataOk = ""
             stats.addCsvRow(path, outPath, shellDate, True, metadataOk, "")
             return
 
-        if skipVideoMetadata and isVideo(path):
+        if options.skipVideoMetadata and isVideo(path):
             stats.inc("metadata_skipped_videos")
             metadataOk = ""
             stats.addCsvRow(path, outPath, shellDate, True, metadataOk, "")
             return
 
-        rc = writeEmbeddedMetadata(
+        rc, exiftoolError = writeEmbeddedMetadata(
             copiedPath=outPath,
             metadata=metadata,
-            timeout=timeout,
-            dateOrder=dateOrder,
-            exiftoolPath=exiftoolPath,
+            timeout=options.timeout,
+            dateOrder=options.dateOrder,
+            exiftoolPath=options.exiftoolPath,
             stats=stats,
+            printLock=printLock,
+            stopEvent=stopEvent,
         )
 
         if rc == 0:
@@ -846,16 +418,18 @@ def processOne(
         else:
             stats.inc("exiftool_errors")
             stats.addMetadataErrored(str(path))
-            stats.addCsvRow(path, outPath, shellDate, True, False, "exiftool error")
+            detail = exiftoolError or f"return code {rc}"
+            stats.addCsvRow(path, outPath, shellDate, True, False, f"ExifTool Error: {detail}")
             return
 
-        if verify:
+        if options.verify:
             expectedDate = datetimeToExiftool(shellDate)
             verified, verifyError = verifyWrittenDate(
                 copiedPath=outPath,
                 expectedDate=expectedDate,
-                exiftoolPath=exiftoolPath,
-                timeout=timeout,
+                exiftoolPath=options.exiftoolPath,
+                timeout=options.timeout,
+                printLock=printLock,
             )
 
             if verified:
@@ -891,7 +465,7 @@ def processOne(
     finally:
         if outPath is not None:
             releaseReservedPath(outPath, reservedPaths, filenameLock)
-        pythoncom.CoUninitialize()
+        uninitializeCom()
 
 
 # ----------------------
@@ -901,12 +475,68 @@ def processOne(
 def main():
     global copySemaphore
 
+    runStartedAt = datetime.datetime.now()
     args = parseArgs()
 
     if not WINDOWS_SHELL_AVAILABLE:
         print("Error: copy_icloud.py requires pywin32 / pythoncom and Windows Shell integration.")
         print("This script is Windows-only and is not expected to run on Linux.")
         sys.exit(2)
+
+    resumeCompletedSources = set()
+    resumeContext = {}
+    resumeRows = []
+    resumeCopiedDestinations = {}
+    resumeCheckpointPath = None
+    srcProvided = args.src is not None
+    destProvided = args.dest is not None
+
+    if args.resume_csv:
+        resumeCsv = resolvePath(args.resume_csv)
+        resumeCheckpointPath = resumeCsv if resumeCsv.stem.endswith("_checkpoint") else None
+
+        if not resumeCsv.exists() or not resumeCsv.is_file():
+            print(f"Error: resume CSV doesn't exist or is not a file: {resumeCsv}")
+            sys.exit(10)
+
+        if resumeCsv.suffix.lower() != ".csv":
+            print("Error: --resume-csv requires a .csv file.")
+            sys.exit(10)
+
+        try:
+            resumeCompletedSources, _resumeSeenSources, resumeContext, resumeRows = loadResumeSources(resumeCsv)
+        except Exception as e:
+            print(f"Error reading resume CSV '{resumeCsv}': {e}")
+            sys.exit(10)
+
+        print(f"Resume CSV loaded: {len(resumeRows)} rows")
+
+    usingSavedContext = args.resume_csv and (not srcProvided or not destProvided)
+
+    if usingSavedContext:
+        if not resumeContext.get("run_src") or not resumeContext.get("run_dest"):
+            print("Error: this resume CSV does not include run context. Pass src and dest explicitly.")
+            sys.exit(10)
+
+        if args.src is None:
+            args.src = resumeContext["run_src"]
+
+        if args.dest is None:
+            args.dest = resumeContext["run_dest"]
+
+    if args.src is None or args.dest is None:
+        print("Error: src and dest are required unless --resume-csv contains run context.")
+        sys.exit(2)
+
+    applyRunDefaults(args, resumeContext, inheritInputMode=not srcProvided)
+    resumeCompletedSources = completedSourcesFromRows(
+        resumeRows,
+        currentFromDate=args.from_date,
+        currentToDate=args.to_date,
+    )
+
+    if args.resume_csv:
+        print(f"Resume completed sources to skip after date filters: {len(resumeCompletedSources)}")
 
     src = resolvePath(args.src)
     dest = resolvePath(args.dest)
@@ -962,36 +592,82 @@ def main():
         print("Error: --copy-retry-delay must be >= 0.")
         sys.exit(9)
 
+    if args.checkpoint_seconds < 0:
+        print("Error: --checkpoint-seconds must be >= 0.")
+        sys.exit(9)
+
+    logDir = resolvePath(args.log_path)
+    _txtLogName, _csvLogName, checkpointPath = logPaths("copy_icloud", logDir, runStartedAt)
+    runContext = buildRunContext(args, src, dest)
     copySemaphore = threading.Semaphore(args.copy_workers)
     fromDate, toDate = parseOptionalDateRange(args.from_date, args.to_date)
+    options = CopyOptions(
+        recursive=args.recursive,
+        keepStructure=args.keep_structure,
+        inputTxt=args.input_txt,
+        fromDate=fromDate,
+        toDate=toDate,
+        dateOrder=args.date_order,
+        exiftoolPath=args.exiftool,
+        writeXmp=args.write_xmp,
+        noMetadata=args.no_metadata,
+        verify=args.verify,
+        skipVideoMetadata=args.skip_video_metadata,
+        quiet=args.quiet,
+        timeout=args.timeout,
+        maxWorkers=args.workers,
+        copyRetries=args.copy_retries,
+        copyRetryDelay=args.copy_retry_delay,
+    )
     stats = Stats()
+    stats.setPreviousCsvRows(resumeRows)
+    resumeCopiedDestinations = loadResumeCopiedDestinations(resumeRows)
+    resumeState = ResumeState(
+        completedSources=resumeCompletedSources,
+        copiedDestinations=resumeCopiedDestinations,
+    )
+    checkpointStopEvent = threading.Event()
+    checkpointThread = None
+
+    if args.checkpoint_seconds > 0:
+        checkpointThread = threading.Thread(
+            target=runCheckpointLoop,
+            args=(stats, checkpointPath, runContext, args.checkpoint_seconds, checkpointStopEvent, printLock),
+            daemon=True,
+        )
+        checkpointThread.start()
 
     try:
         copyIcloudMedia(
             src=src,
             dest=dest,
-            recursive=args.recursive,
-            keepStructure=args.keep_structure,
-            inputTxt=args.input_txt,
-            fromDate=fromDate,
-            toDate=toDate,
-            dateOrder=args.date_order,
-            exiftoolPath=args.exiftool,
-            writeXmp=args.write_xmp,
-            noMetadata=args.no_metadata,
-            verify=args.verify,
-            skipVideoMetadata=args.skip_video_metadata,
+            options=options,
+            resumeState=resumeState,
             stats=stats,
-            timeout=args.timeout,
-            maxWorkers=args.workers,
-            copyRetries=args.copy_retries,
-            copyRetryDelay=args.copy_retry_delay,
         )
     except KeyboardInterrupt:
         stopEvent.set()
         print("\nExecution interrupted by the user")
     finally:
-        saveLog(stats, csvLogPath=args.csv_log)
+        checkpointStopEvent.set()
+
+        if checkpointThread is not None:
+            checkpointThread.join()
+
+        runEndedAt = datetime.datetime.now()
+        saveRunLog(
+            stats,
+            logPrefix="copy_icloud",
+            logDir=logDir,
+            runContext=runContext,
+            runStartedAt=runStartedAt,
+            runEndedAt=runEndedAt,
+            interrupted=stopEvent.is_set(),
+        )
+        removeCheckpoint(checkpointPath, printLock=printLock)
+
+        if resumeCheckpointPath is not None and resumeCheckpointPath != checkpointPath:
+            removeCheckpoint(resumeCheckpointPath, printLock=printLock)
 
 
 if __name__ == "__main__":

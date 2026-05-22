@@ -207,10 +207,12 @@ def dtFromFilename(path):
 # Logging helpers
 # ----------------------
 
-def timestampedName(prefix, ext="txt"):
-    stamp = datetime.datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
-    logDir = Path("logs")
-    logDir.mkdir(exist_ok=True)
+def timestampedName(prefix, ext="txt", logDir="logs", stamp=None):
+    if stamp is None:
+        stamp = datetime.datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
+
+    logDir = Path(logDir)
+    logDir.mkdir(parents=True, exist_ok=True)
 
     return str(logDir / f"{prefix}_{stamp}.{ext}")
 
@@ -222,7 +224,7 @@ def saveSimpleLog(lines, filename):
             if not line.endswith("\n"):
                 f.write("\n")
 
-    print(f"\nLog saved to {filename}")
+    print(f"\nTXT log saved to {filename}")
 
 
 def savePathList(paths, filename):
@@ -257,29 +259,62 @@ def runParallel(paths, workerFn, maxWorkers=None, stopEvent=None, onError=None):
     if maxWorkers is None or maxWorkers <= 0:
         maxWorkers = defaultWorkers()
 
+    maxPending = max(1, maxWorkers * 2)
     ex = concurrent.futures.ThreadPoolExecutor(max_workers=maxWorkers)
     futures = {}
+    pathIter = iter(paths)
+
+    def submitNext():
+        try:
+            path = next(pathIter)
+        except StopIteration:
+            return False
+
+        futures[ex.submit(workerFn, path)] = path
+        return True
 
     try:
-        for path in paths:
+        while len(futures) < maxPending:
             if stopEvent and stopEvent.is_set():
                 break
 
-            futures[ex.submit(workerFn, path)] = path
+            if not submitNext():
+                break
 
-        for fut, path in futures.items():
+        while futures:
             if stopEvent and stopEvent.is_set():
                 break
+
+            done, _pending = concurrent.futures.wait(
+                futures,
+                return_when=concurrent.futures.FIRST_COMPLETED,
+            )
 
             try:
-                fut.result()
+                for fut in done:
+                    path = futures.pop(fut)
+
+                    try:
+                        fut.result()
+                    except KeyboardInterrupt:
+                        if stopEvent:
+                            stopEvent.set()
+                        raise
+                    except Exception as e:
+                        if onError:
+                            onError(path, e)
+
+                    while len(futures) < maxPending:
+                        if stopEvent and stopEvent.is_set():
+                            break
+
+                        if not submitNext():
+                            break
+
             except KeyboardInterrupt:
                 if stopEvent:
                     stopEvent.set()
                 raise
-            except Exception as e:
-                if onError:
-                    onError(path, e)
 
     except KeyboardInterrupt:
         for fut in futures:
@@ -289,7 +324,13 @@ def runParallel(paths, workerFn, maxWorkers=None, stopEvent=None, onError=None):
         raise
 
     else:
-        ex.shutdown(wait=True, cancel_futures=False)
+        if stopEvent and stopEvent.is_set():
+            for fut in futures:
+                fut.cancel()
+
+            ex.shutdown(wait=True, cancel_futures=True)
+        else:
+            ex.shutdown(wait=True, cancel_futures=False)
 
 
 # ----------------------
@@ -321,9 +362,20 @@ def cleanupExiftoolTmp(path, printLock=None, stats=None):
                     print()
 
 
-def runExiftool(exiftoolPath, argsList, dryRun=False, timeout=30, printLock=None, targetPath=None, stats=None, stopEvent=None):
+def runExiftool(
+    exiftoolPath,
+    argsList,
+    dryRun=False,
+    timeout=30,
+    printLock=None,
+    targetPath=None,
+    stats=None,
+    stopEvent=None,
+    printStdout=True,
+    returnStderr=False,
+):
     if stopEvent and stopEvent.is_set():
-        return 130
+        return (130, "") if returnStderr else 130
 
     cmd = [exiftoolPath, "-overwrite_original", "-m", "-P"] + argsList
 
@@ -333,7 +385,7 @@ def runExiftool(exiftoolPath, argsList, dryRun=False, timeout=30, printLock=None
                 printable = " ".join(f'"{part}"' if " " in part else part for part in cmd)
                 print("DRY-RUN:", printable)
 
-        return 0
+        return (0, "") if returnStderr else 0
 
     try:
         proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=timeout)
@@ -342,13 +394,13 @@ def runExiftool(exiftoolPath, argsList, dryRun=False, timeout=30, printLock=None
         if targetPath:
             cleanupExiftoolTmp(targetPath, printLock=printLock, stats=stats)
 
-        return 124
+        return (124, "") if returnStderr else 124
 
     except KeyboardInterrupt:
         if stopEvent:
             stopEvent.set()
 
-        return 130
+        return (130, "") if returnStderr else 130
 
     if targetPath:
         cleanupExiftoolTmp(targetPath, printLock=printLock, stats=stats)
@@ -358,10 +410,13 @@ def runExiftool(exiftoolPath, argsList, dryRun=False, timeout=30, printLock=None
             with printLock:
                 sys.stderr.write(proc.stderr.strip() + "\n")
 
-    elif proc.stdout:
+    elif printStdout and proc.stdout:
         out = proc.stdout.strip()
         if out and printLock:
             with printLock:
                 print(out)
+
+    if returnStderr:
+        return proc.returncode, (proc.stderr or "").strip()
 
     return proc.returncode
