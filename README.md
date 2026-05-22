@@ -99,7 +99,6 @@ When resuming, `src` and `dest` can be omitted if the CSV includes run context. 
 
 Date filters saved in the resume CSV are reused by default. Passing new `--from-date` or `--to-date` values overrides the saved filters. Use `--clear-date-filter` to remove saved date filters when resuming.
 
-
 #### `copy_icloud.py` logs
 
 By default logs are written to `.\logs`. Change this with `--log-path`.
@@ -158,7 +157,7 @@ This project is primarily intended for Windows but it works partially in other o
 
 Install Python 3.10 or newer from:
 
-- https://www.python.org/downloads/windows/
+- <https://www.python.org/downloads/windows/>
 
 During installation, enable `Add Python to PATH`.
 
@@ -175,7 +174,7 @@ You need the `ffmpeg` and `ffprobe` executables, because the scripts use `ffmpeg
 
 You can get it from:
 
-- https://ffmpeg.org/download.html
+- <https://ffmpeg.org/download.html>
 
 Make sure both `ffmpeg` and `ffprobe` are available in `PATH`.
 
@@ -192,7 +191,7 @@ ffprobe -version
 
 You can download it from:
 
-- https://imagemagick.org/script/download.php#windows
+- <https://imagemagick.org/script/download.php#windows>
 
 During installation, enable the command-line integration needed by `Wand`.
 
@@ -202,7 +201,7 @@ During installation, enable the command-line integration needed by `Wand`.
 
 You can download it from:
 
-- https://exiftool.org/
+- <https://exiftool.org/>
 
 Make sure the executable is available in `PATH`, or pass its full path with `--exiftool`.
 
