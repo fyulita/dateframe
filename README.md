@@ -8,6 +8,13 @@ Python scripts for inspecting metadata of media files, renaming photos and video
 
 Lists file extensions found in a folder. Useful for quickly checking which file types exist before processing them.
 
+It prints counts per extension and can also read paths from a TXT file.
+
+```powershell
+python list_extensions.py "C:\Users\You\Pictures"
+python list_extensions.py --input-txt ".\files-to-check.txt"
+```
+
 ### `read_metadata.py`
 
 Reads and prints file metadata using multiple methods:
@@ -16,8 +23,16 @@ Reads and prints file metadata using multiple methods:
 - `Pillow`
 - `ffmpeg`
 - Windows filesystem dates with `-w`
+- associated XMP/XML sidecars with `--sidecars`
 
 This is useful for diagnosing which dates or tags are actually present in an image or video before renaming files or writing metadata.
+
+By default it runs all readers that are appropriate for the current operating system. The Windows filesystem reader is included by default only on Windows. Pass one or more reader flags to run only those methods.
+
+```powershell
+python read_metadata.py "C:\Users\You\Pictures\IMG_1234.ARW"
+python read_metadata.py --ffmpeg --sidecars "C:\Users\You\Pictures\VID_1234.MP4"
+```
 
 ### `rename_media.py`
 
