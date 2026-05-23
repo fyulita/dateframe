@@ -1,8 +1,47 @@
 # rename-media
 
-Python scripts for inspecting metadata of media files, renaming photos and videos using their real capture date, writing dates back into file metadata, and copying media from iCloud Photos on Windows.
+Tools for organizing photo and video libraries by their real capture date while preserving useful metadata and making long operations resumable.
 
-The scripts intended to be run directly live at the repository root. Shared implementation modules live in `media_tools/`.
+Use this project to:
+
+- copy media from iCloud Photos on Windows while preserving dates from Windows Shell metadata
+- rename photos and videos from camera folders using embedded metadata or associated sidecars
+- write filename-based capture dates back into media metadata
+- inspect metadata and file extensions before processing a library
+- recover safely from interrupted long-running operations using CSV logs and checkpoints
+
+`copy_icloud.py` is Windows-only. The other scripts are designed to work across operating systems when their required external tools are installed.
+
+The scripts intended to be run directly are kept at the repository root. Shared implementation modules live in `media_tools/`.
+
+## Quick start
+
+Install the dependencies described in [Requirements](#requirements), then choose the workflow that matches your library.
+
+Copy media directly from iCloud Photos on Windows:
+
+```powershell
+python copy_icloud.py "C:\Users\You\Pictures\iCloud Photos\Photos" "C:\Users\You\Pictures\iCloud-Renamed"
+```
+
+Copy and rename media from a regular camera or export folder:
+
+```powershell
+python rename_media.py --copy "C:\Users\You\Pictures\Originals" "C:\Users\You\Pictures\Renamed"
+```
+
+Write dates from renamed filenames into metadata:
+
+```powershell
+python write_dates.py "C:\Users\You\Pictures\Renamed"
+```
+
+Continue a previous interrupted run using its latest CSV or checkpoint:
+
+```powershell
+python rename_media.py --resume-csv ".\logs\rename_media_2026-05-22T13-37-05.csv"
+python copy_icloud.py --resume-csv ".\logs\copy_icloud_2026-05-21T22-54-12_checkpoint.csv"
+```
 
 ## Included scripts
 
@@ -303,9 +342,17 @@ If date filters change when resuming, rows that were previously skipped as `outs
 
 Use the most recent CSV log when resuming. Each new resume CSV includes accumulated rows from the previous CSV plus newly processed rows, so the newest CSV becomes the next resume point.
 
+## Privacy and safety
+
+These scripts are designed to process personal media libraries. Before processing a large collection, test the command on a small copied sample first and review the produced CSV/TXT logs.
+
+Logs can contain full local file paths, folder names, filenames, selected metadata values, errors, and effective commands. Before sharing logs in an issue, discussion, forum post, or pull request, review and redact any private information.
+
+When using copy or move operations, keep an independent backup of important media until you have verified the output.
+
 ## Requirements
 
-This project is primarily intended for Windows but it works partially in other operating systems.
+Most scripts support Windows, Linux, and macOS when the required external tools are installed.
 
 `copy_icloud.py` is the exception: it is Windows-only because it depends on Windows Shell metadata and `pywin32`.
 
@@ -382,7 +429,7 @@ Notes:
 - `Wand` requires ImageMagick to already be installed
 - `ffmpeg-python` is only a wrapper and does not replace the `ffmpeg` binaries
 
-## Quick setup
+## Clone and install
 
 Clone or copy this repository, then install the dependencies:
 
@@ -393,3 +440,11 @@ pip install -r requirements.txt
 ```
 
 If you are not using `git`, copying the project folder and running `pip install ...` inside it is enough.
+
+## Contributing
+
+Bug reports and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, validation guidance, and what information is most useful in a report.
+
+## License
+
+This project is licensed under the GNU General Public License v3.0. See [LICENSE.md](LICENSE.md).
