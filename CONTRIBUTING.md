@@ -17,7 +17,7 @@ git clone https://github.com/fyulita/rename-media.git
 cd rename-media
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 ```
 
 On Linux or macOS, activate the virtual environment with:
@@ -75,10 +75,16 @@ Please describe how you tested the change and avoid committing logs, generated o
 
 ## Basic validation
 
-Before opening a pull request, at minimum verify that edited scripts compile:
+Before opening a pull request, run the automated tests:
+
+```powershell
+python -m pytest
+```
+
+Also verify that edited scripts compile:
 
 ```powershell
 python -m py_compile copy_icloud.py rename_media.py write_dates.py read_metadata.py list_extensions.py media_tools\__init__.py media_tools\capture_dates.py media_tools\copy_icloud_config.py media_tools\media_common.py media_tools\media_logging.py media_tools\metadata_writer.py media_tools\windows_metadata.py
 ```
 
-For behavior changes, run the relevant command against a small temporary sample folder and inspect its output and logs. Automated tests will be added as the project develops.
+For behavior changes, run the relevant command against a small temporary sample folder and inspect its output and logs.

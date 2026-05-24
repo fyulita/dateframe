@@ -151,9 +151,18 @@ def associatedSidecarPaths(path):
     ]
 
     if path.parent.exists():
-        candidates.extend(path.parent.glob(f"{path.stem}M[0-9]*.xml"))
-        candidates.extend(path.parent.glob(f"{path.name}.M[0-9]*.xml"))
-        candidates.extend(path.parent.glob(f"{path.name}.M[0-9]*.XML"))
+        regularSidecarNames = {candidate.name.casefold() for candidate in candidates}
+        sonyPattern = re.compile(
+            rf"^(?:{re.escape(path.stem)}M\d+|{re.escape(path.name)}\.M\d+)\.xml$",
+            re.IGNORECASE,
+        )
+
+        for candidate in path.parent.iterdir():
+            if not candidate.is_file():
+                continue
+
+            if candidate.name.casefold() in regularSidecarNames or sonyPattern.match(candidate.name):
+                candidates.append(candidate)
 
     return candidates
 
