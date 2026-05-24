@@ -172,19 +172,17 @@ def captureDateFromAssociatedSidecars(path, extraSidecars=None):
     candidates = []
 
     for candidate in associatedSidecarPaths(path):
-        key = str(candidate).lower()
+        key = str(candidate).casefold()
 
-        if key in seen:
+        if key in seen or not candidate.exists():
             continue
 
         seen.add(key)
-
-        if candidate.exists():
-            candidates.append(candidate)
+        candidates.append(candidate)
 
     for candidate in extraSidecars or []:
         candidate = Path(candidate)
-        key = str(candidate).lower()
+        key = str(candidate).casefold()
 
         if key not in seen and candidate.exists():
             seen.add(key)
