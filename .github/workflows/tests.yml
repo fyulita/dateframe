@@ -39,6 +39,10 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install imagemagick
 
+      - name: Configure ImageMagick for Wand on macOS
+        if: runner.os == 'macOS'
+        run: echo "MAGICK_HOME=$(brew --prefix imagemagick)" >> "$GITHUB_ENV"
+
       - name: Install Python dependencies
         run: python -m pip install -r requirements-dev.txt
 
