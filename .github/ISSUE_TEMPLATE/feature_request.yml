@@ -1,0 +1,65 @@
+name: Feature Request
+description: Suggest a new workflow or improvement for DateFrame.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for sharing an idea. Describe the media-management problem first, so we can judge whether it belongs in DateFrame and how it should fit existing workflows.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Related area
+      options:
+        - dateframe import-icloud
+        - dateframe rename
+        - dateframe write-dates
+        - dateframe inspect
+        - dateframe extensions
+        - Logging and resume
+        - Documentation
+        - Installation or packaging
+        - New command or workflow
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: What media-library problem or limitation are you encountering?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed
+    attributes:
+      label: Proposed behavior
+      description: How would you like DateFrame to handle it?
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Relevant context
+      description: Include file formats, metadata sources, sidecars, iCloud workflow, operating system, or other details that matter.
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Current alternative
+      description: Is there a workaround or another tool you currently use?
+
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy confirmation
+      options:
+        - label: I did not include personal media files or unredacted sensitive metadata in this public request.
+          required: true
+
