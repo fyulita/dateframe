@@ -6,7 +6,7 @@ import datetime
 from dataclasses import dataclass
 from typing import Optional
 
-from media_tools.media_common import positiveInt, resolvePath
+from media_tools.media_common import effectiveCommandPrefix, positiveInt, resolvePath
 from media_tools.media_logging import metadataBool, metadataFloat, metadataInt
 
 
@@ -37,7 +37,7 @@ class ResumeState:
 
 
 def buildEffectiveCommand(args, src, dest):
-    parts = ["python", "copy_icloud.py"]
+    parts = effectiveCommandPrefix("copy_icloud.py", "import-icloud")
 
     if args.input_txt:
         parts.append("--input-txt")

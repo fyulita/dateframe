@@ -1,4 +1,4 @@
-# rename-media
+# DateFrame
 
 Tools for organizing photo and video libraries by their real capture date while preserving useful metadata and making long operations resumable.
 
@@ -10,9 +10,9 @@ Use this project to:
 - inspect metadata and file extensions before processing a library
 - recover safely from interrupted long-running operations using CSV logs and checkpoints
 
-`copy_icloud.py` is Windows-only. The other scripts are designed to work across operating systems when their required external tools are installed.
+`dateframe import-icloud` is Windows-only. The other commands are designed to work across operating systems when their required external tools are installed.
 
-The scripts intended to be run directly are kept at the repository root. Shared implementation modules live in `media_tools/`.
+Installing the package provides one `dateframe` command with the subcommands shown below. The corresponding Python modules are kept at the repository root, while shared implementation modules live in `media_tools/`.
 
 ## Quick start
 
@@ -21,42 +21,42 @@ Install the dependencies described in [Requirements](#requirements), then choose
 Copy media directly from iCloud Photos on Windows:
 
 ```powershell
-python copy_icloud.py "C:\Users\You\Pictures\iCloud Photos\Photos" "C:\Users\You\Pictures\iCloud-Renamed"
+dateframe import-icloud "C:\Users\You\Pictures\iCloud Photos\Photos" "C:\Users\You\Pictures\iCloud-Renamed"
 ```
 
 Copy and rename media from a regular camera or export folder:
 
 ```powershell
-python rename_media.py --copy "C:\Users\You\Pictures\Originals" "C:\Users\You\Pictures\Renamed"
+dateframe rename --copy "C:\Users\You\Pictures\Originals" "C:\Users\You\Pictures\Renamed"
 ```
 
 Write dates from renamed filenames into metadata:
 
 ```powershell
-python write_dates.py "C:\Users\You\Pictures\Renamed"
+dateframe write-dates "C:\Users\You\Pictures\Renamed"
 ```
 
 Continue a previous interrupted run using its latest CSV or checkpoint:
 
 ```powershell
-python rename_media.py --resume-csv ".\logs\rename_media_2026-05-22T13-37-05.csv"
-python copy_icloud.py --resume-csv ".\logs\copy_icloud_2026-05-21T22-54-12_checkpoint.csv"
+dateframe rename --resume-csv ".\logs\rename_media_2026-05-22T13-37-05.csv"
+dateframe import-icloud --resume-csv ".\logs\copy_icloud_2026-05-21T22-54-12_checkpoint.csv"
 ```
 
-## Included scripts
+## Included commands
 
-### `list_extensions.py`
+### `dateframe extensions` (`list_extensions.py`)
 
 Lists file extensions found in a folder. Useful for quickly checking which file types exist before processing them.
 
 It prints counts per extension and can also read paths from a TXT file.
 
 ```powershell
-python list_extensions.py "C:\Users\You\Pictures"
-python list_extensions.py --input-txt ".\files-to-check.txt"
+dateframe extensions "C:\Users\You\Pictures"
+dateframe extensions --input-txt ".\files-to-check.txt"
 ```
 
-### `read_metadata.py`
+### `dateframe inspect` (`read_metadata.py`)
 
 Reads and prints file metadata using multiple methods:
 
@@ -71,11 +71,11 @@ This is useful for diagnosing which dates or tags are actually present in an ima
 By default it runs all readers that are appropriate for the current operating system. The Windows filesystem reader is included by default only on Windows. Pass one or more reader flags to run only those methods.
 
 ```powershell
-python read_metadata.py "C:\Users\You\Pictures\IMG_1234.ARW"
-python read_metadata.py --ffmpeg --sidecars "C:\Users\You\Pictures\VID_1234.MP4"
+dateframe inspect "C:\Users\You\Pictures\IMG_1234.ARW"
+dateframe inspect --ffmpeg --sidecars "C:\Users\You\Pictures\VID_1234.MP4"
 ```
 
-### `rename_media.py`
+### `dateframe rename` (`rename_media.py`)
 
 Copies or moves media files from a source folder to a destination folder and renames them using the best date found in metadata.
 
@@ -95,36 +95,36 @@ Copies or moves media files from a source folder to a destination folder and ren
 Basic copy usage:
 
 ```powershell
-python rename_media.py --copy "C:\Users\You\Pictures\Originals" "C:\Users\You\Pictures\Renamed"
+dateframe rename --copy "C:\Users\You\Pictures\Originals" "C:\Users\You\Pictures\Renamed"
 ```
 
 Move recursively while keeping the source folder structure:
 
 ```powershell
-python rename_media.py --move --recursive --keep-structure "C:\Users\You\Pictures\Unsorted" "C:\Users\You\Pictures\Sorted"
+dateframe rename --move --recursive --keep-structure "C:\Users\You\Pictures\Unsorted" "C:\Users\You\Pictures\Sorted"
 ```
 
 TXT input list usage:
 
 ```powershell
-python rename_media.py --copy --input-txt ".\files-to-rename.txt" "C:\Users\You\Pictures\Renamed"
+dateframe rename --copy --input-txt ".\files-to-rename.txt" "C:\Users\You\Pictures\Renamed"
 ```
 
 Resume from the latest CSV log:
 
 ```powershell
-python rename_media.py --resume-csv ".\logs\rename_media_2026-05-22T13-37-05.csv"
+dateframe rename --resume-csv ".\logs\rename_media_2026-05-22T13-37-05.csv"
 ```
 
 Resume from a checkpoint after a power loss:
 
 ```powershell
-python rename_media.py --resume-csv ".\logs\rename_media_2026-05-22T13-37-05_checkpoint.csv"
+dateframe rename --resume-csv ".\logs\rename_media_2026-05-22T13-37-05_checkpoint.csv"
 ```
 
 When resuming, `src` and `dest` can be omitted if the CSV includes run context. You can still override operational flags such as `--workers`, `--windows`, `--quiet`, `--copy`, and `--move`.
 
-`rename_media.py` writes logs to `.\logs` by default. Change this with `--log-path`.
+`dateframe rename` writes logs to `.\logs` by default. Change this with `--log-path`.
 
 The CSV log records each source path, destination path, detected date, media type, action (`copy` or `move`), date source, whether processing succeeded, errors, and run context. Successful rows are skipped when resuming; failed rows are retried if the source path still exists.
 
@@ -165,7 +165,7 @@ Useful CSV columns:
 - `paired_source`: original path of the other file in a Live Photo pair
 - `processed_ok`: `True` when the row completed successfully
 
-### `write_dates.py`
+### `dateframe write-dates` (`write_dates.py`)
 
 Takes files already renamed in the format `YYYY-MM-DDTHH-mm-SS.ext` and writes that date into the file using `ExifTool`.
 
@@ -181,34 +181,34 @@ Takes files already renamed in the format `YYYY-MM-DDTHH-mm-SS.ext` and writes t
 Basic usage:
 
 ```powershell
-python write_dates.py "C:\Users\You\Pictures\Renamed"
+dateframe write-dates "C:\Users\You\Pictures\Renamed"
 ```
 
 Resume from the latest CSV log:
 
 ```powershell
-python write_dates.py --resume-csv ".\logs\write_dates_2026-05-22T12-58-10.csv"
+dateframe write-dates --resume-csv ".\logs\write_dates_2026-05-22T12-58-10.csv"
 ```
 
 Resume with explicit conservative settings:
 
 ```powershell
-python write_dates.py --resume-csv ".\logs\write_dates_2026-05-22T12-58-10.csv" --workers 1 --timeout 90
+dateframe write-dates --resume-csv ".\logs\write_dates_2026-05-22T12-58-10.csv" --workers 1 --timeout 90
 ```
 
 Resume from a checkpoint after a power loss:
 
 ```powershell
-python write_dates.py --resume-csv ".\logs\write_dates_2026-05-22T12-58-10_checkpoint.csv"
+dateframe write-dates --resume-csv ".\logs\write_dates_2026-05-22T12-58-10_checkpoint.csv"
 ```
 
 TXT input list usage:
 
 ```powershell
-python write_dates.py --input-txt ".\files-to-write.txt"
+dateframe write-dates --input-txt ".\files-to-write.txt"
 ```
 
-`write_dates.py` writes logs to `.\logs` by default. Change this with `--log-path`.
+`dateframe write-dates` writes logs to `.\logs` by default. Change this with `--log-path`.
 
 The CSV log records each source path, the date parsed from the filename, whether metadata writing succeeded, the write target (`embedded`, generated `.xmp`, or `dry-run`), errors, and run context. On resume, successful rows and definitive skips such as missing dates in filenames are skipped; failed metadata writes are retried.
 
@@ -230,16 +230,18 @@ Useful CSV columns:
 - `write_target`: `embedded`, generated `.xmp`, or `dry-run`
 - `error`: empty for success; otherwise contains skip/error detail
 
-### `copy_icloud.py`
+### `dateframe import-icloud` (`copy_icloud.py`)
 
 Windows-only script designed for iCloud Photos on Windows.
 
 It depends on Windows Shell / COM metadata through `pywin32`, so it is not expected to run on Linux or macOS.
 
 - reads the Windows Shell / iCloud date first
+- preserves exact embedded seconds when they match the Windows/iCloud date to the minute
+- falls back to embedded capture date when Windows does not expose one
 - filters by date range with `--from-date` and `--to-date`
 - copies only files that pass the filter
-- renames files using that Shell date
+- renames files using the selected capture date
 - writes embedded metadata with `ExifTool`
 - can optionally create `.xmp` sidecar files with `--write-xmp`
 - can skip embedded metadata entirely with `--no-metadata`
@@ -253,25 +255,25 @@ It depends on Windows Shell / COM metadata through `pywin32`, so it is not expec
 Basic usage:
 
 ```powershell
-python copy_icloud.py "C:\Users\You\Pictures\iCloud Photos\Photos" "C:\Users\You\Pictures\iCloud Renamed"
+dateframe import-icloud "C:\Users\You\Pictures\iCloud Photos\Photos" "C:\Users\You\Pictures\iCloud Renamed"
 ```
 
 Date filter usage:
 
 ```powershell
-python copy_icloud.py --from-date 2020-01-01 --to-date 2020-12-31 "C:\Users\You\Pictures\iCloud Photos\Photos" "C:\Users\You\Pictures\iCloud Renamed"
+dateframe import-icloud --from-date 2020-01-01 --to-date 2020-12-31 "C:\Users\You\Pictures\iCloud Photos\Photos" "C:\Users\You\Pictures\iCloud Renamed"
 ```
 
 Low-resource usage:
 
 ```powershell
-python copy_icloud.py --workers 2 --copy-workers 1 --checkpoint-seconds 300 --quiet "C:\Users\You\Pictures\iCloud Photos\Photos" "C:\Users\You\Pictures\iCloud Renamed"
+dateframe import-icloud --workers 2 --copy-workers 1 --checkpoint-seconds 300 --quiet "C:\Users\You\Pictures\iCloud Photos\Photos" "C:\Users\You\Pictures\iCloud Renamed"
 ```
 
 TXT input list usage:
 
 ```powershell
-python copy_icloud.py --input-txt ".\files-to-process.txt" "D:\Media\Pictures\iCloud"
+dateframe import-icloud --input-txt ".\files-to-process.txt" "D:\Media\Pictures\iCloud"
 ```
 
 When `--input-txt` is used, each non-empty, non-comment line is treated as one source file path. Date filters still apply.
@@ -279,20 +281,20 @@ When `--input-txt` is used, each non-empty, non-comment line is treated as one s
 Resume from the latest CSV log:
 
 ```powershell
-python copy_icloud.py --resume-csv ".\logs\copy_icloud_2026-05-21T22-54-12.csv"
+dateframe import-icloud --resume-csv ".\logs\copy_icloud_2026-05-21T22-54-12.csv"
 ```
 
 Resume from a checkpoint after a power loss:
 
 ```powershell
-python copy_icloud.py --resume-csv ".\logs\copy_icloud_2026-05-21T22-54-12_checkpoint.csv"
+dateframe import-icloud --resume-csv ".\logs\copy_icloud_2026-05-21T22-54-12_checkpoint.csv"
 ```
 
 When resuming, `src` and `dest` can be omitted if the CSV includes run context. You can still override operational flags such as `--workers`, `--copy-workers`, `--exiftool`, `--write-xmp`, `--no-metadata`, `--verify`, and `--quiet`.
 
 Date filters saved in the resume CSV are reused by default. Passing new `--from-date` or `--to-date` values overrides the saved filters. Use `--clear-date-filter` to remove saved date filters when resuming.
 
-#### `copy_icloud.py` logs
+#### `dateframe import-icloud` logs
 
 By default logs are written to `.\logs`. Change this with `--log-path`.
 
@@ -319,8 +321,8 @@ Important CSV columns:
 
 - `source`: original file path
 - `dest`: copied destination path, when a copy exists
-- `date`: Windows Shell date used for naming and metadata
-- `copied_ok`: `True` if the file was copied; empty for non-copy skips such as date filters or missing Shell date
+- `date`: effective capture date used for naming and metadata
+- `copied_ok`: `True` if the file was copied; empty for non-copy skips such as date filters or missing usable date
 - `metadata_ok`: `True` if embedded metadata finished successfully, `False` if metadata failed, empty when metadata was intentionally skipped
 - `error`: empty for success; otherwise contains the skip/error reason
 - `run_resume_csv`: CSV used as the resume source for that row's run
@@ -338,13 +340,13 @@ error=metadata pending
 
 This protects long runs from power loss: if a file was copied but metadata had not finished yet, a later resume can retry metadata on the already-copied destination instead of copying the file again.
 
-Rows with copy or metadata errors are retried automatically when using `--resume-csv`. Rows that completed successfully, were outside the date range, were not media, or had no Shell date are skipped on resume.
+Rows with copy or metadata errors are retried automatically when using `--resume-csv`. Rows that completed successfully, were outside the date range, were not media, or had no usable date are skipped on resume.
 
 If date filters change when resuming, rows that were previously skipped as `outside date range` are reevaluated with the new effective filter.
 
 ## Logging and resume behavior
 
-`copy_icloud.py`, `rename_media.py`, and `write_dates.py` share the same logging model:
+`dateframe import-icloud`, `dateframe rename`, and `dateframe write-dates` share the same logging model:
 
 - every run writes a CSV log and a TXT summary log
 - logs are named with the run start time
@@ -369,7 +371,7 @@ When using copy or move operations, keep an independent backup of important medi
 
 Most scripts support Windows, Linux, and macOS when the required external tools are installed.
 
-`copy_icloud.py` is the exception: it is Windows-only because it depends on Windows Shell metadata and `pywin32`.
+`dateframe import-icloud` is the exception: it is Windows-only because it depends on Windows Shell metadata and `pywin32`.
 
 ### 1. Install Python
 
@@ -415,7 +417,7 @@ During installation, enable the command-line integration needed by `Wand`.
 
 ### 4. Install ExifTool
 
-`write_dates.py` and `copy_icloud.py` use `ExifTool` to write metadata. `rename_media.py` uses it to confirm Apple Live Photo pairs through their embedded identifiers.
+`dateframe write-dates` and `dateframe import-icloud` use `ExifTool` to write metadata. `dateframe rename` uses it to confirm Apple Live Photo pairs through their embedded identifiers.
 
 You can download it from:
 
@@ -429,32 +431,38 @@ Verify:
 exiftool -ver
 ```
 
-### 5. Install Python dependencies
+### 5. Install DateFrame
 
-From the project folder:
+From a cloned project folder:
 
 ```powershell
-pip install -r requirements.txt
+pip install .
+```
+
+After a PyPI release is available, install the published package with:
+
+```powershell
+pip install dateframe
 ```
 
 Notes:
 
-- If you only use `copy_icloud.py`, you need Python, `pywin32`, and `ExifTool`. `ffmpeg` and ImageMagick are used by the other scripts.
-- `pywin32` is required for `copy_icloud.py` and is only available on Windows
+- If you only use `dateframe import-icloud`, you need Python, `pywin32`, and `ExifTool`. `ffmpeg` and ImageMagick are used by the other commands.
+- `pywin32` is required for `dateframe import-icloud` and is only available on Windows
 - `Wand` requires ImageMagick to already be installed
 - `ffmpeg-python` is only a wrapper and does not replace the `ffmpeg` binaries
 
 ## Clone and install
 
-Clone or copy this repository, then install the dependencies:
+Clone this repository, then install DateFrame:
 
 ```powershell
-git clone https://github.com/fyulita/rename-media.git
-cd rename-media
-pip install -r requirements.txt
+git clone https://github.com/fyulita/dateframe.git
+cd dateframe
+pip install .
 ```
 
-If you are not using `git`, copying the project folder and running `pip install ...` inside it is enough.
+If you are not using `git`, copying the project folder and running `pip install .` inside it is enough.
 
 ## Contributing
 
