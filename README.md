@@ -86,6 +86,7 @@ Copies or moves media files from a source folder to a destination folder and ren
 - keeps folder structure with `--keep-structure`
 - can take files from a TXT input list with `--input-txt`
 - keeps associated `.xmp` / `.xml` sidecars together with their media file
+- keeps Apple Live Photo image/`.MOV` pairs on a common renamed timestamp
 - always writes a CSV log that can be used to resume later
 - writes a TXT summary log
 - writes periodic checkpoint CSVs during long runs
@@ -140,6 +141,17 @@ IMG_1234.XMP   -> 2026-03-02T03-20-52.ARW.XMP
 
 The script detects regular same-stem sidecars such as `IMG_1234.XMP`, and Sony-style XML sidecars such as `C0001M01.XML` for `C0001.MP4`.
 
+Apple Live Photo `.HEIC`, `.JPG`, or `.JPEG` images and `.MOV` files are checked with `ExifTool`. They are treated as a pair only when the image identifier (`Apple:ContentIdentifier` / `MediaGroupUUID`) matches the video `QuickTime:ContentIdentifier`, even if their original filenames differ. The image capture date is preferred for both output names so the pair stays visibly associated:
+
+```text
+IMG_1234.HEIC   -> 2026-03-02T03-20-52.HEIC
+IMG_1234.MOV    -> 2026-03-02T03-20-52.MOV
+```
+
+If the image does not provide a usable date, the `.MOV` date is used for both files. Files without a matching embedded identifier remain independent media files. Use `--no-live-photos` to disable this detection; the setting and confirmed pair identifier are recorded and preserved when resuming. Change the ExifTool executable with `--exiftool` when needed.
+
+When a detected Live Photo has a regular same-stem `.XMP` or `.XML` sidecar, that sidecar is kept with the image member of the pair. Sony-style video sidecars such as `C0001M01.XML` continue to stay with their video.
+
 Useful CSV columns:
 
 - `source`: original file path
@@ -148,6 +160,9 @@ Useful CSV columns:
 - `date_offset`: timezone offset found in a sidecar, if available
 - `media_type`: `image`, `video`, `sidecar`, or `other`
 - `date_source`: where the date came from, such as `wand:dng:create.date` or `sidecar:...:creationdate`
+- `pair_type`: `live_photo` for image/video pairs detected as an Apple Live Photo
+- `pair_id`: matching embedded identifier used to confirm a Live Photo pair
+- `paired_source`: original path of the other file in a Live Photo pair
 - `processed_ok`: `True` when the row completed successfully
 
 ### `write_dates.py`
@@ -400,7 +415,7 @@ During installation, enable the command-line integration needed by `Wand`.
 
 ### 4. Install ExifTool
 
-`write_dates.py` and `copy_icloud.py` use `ExifTool`.
+`write_dates.py` and `copy_icloud.py` use `ExifTool` to write metadata. `rename_media.py` uses it to confirm Apple Live Photo pairs through their embedded identifiers.
 
 You can download it from:
 

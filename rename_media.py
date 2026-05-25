@@ -3,9 +3,11 @@
 
 import argparse
 import datetime
+import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import threading
 import warnings
@@ -59,8 +61,23 @@ try:
 except Exception:
     pass
 
-CSV_FIELDS = ["source", "dest", "date", "date_offset", "media_type", "action", "date_source", "processed_ok", "error"]
+CSV_FIELDS = [
+    "source",
+    "dest",
+    "date",
+    "date_offset",
+    "media_type",
+    "action",
+    "date_source",
+    "pair_type",
+    "pair_id",
+    "paired_source",
+    "processed_ok",
+    "error",
+]
 SIDECAR_EXTS = {".xmp", ".xml"}
+LIVE_PHOTO_IMAGE_EXTS = {".heic", ".jpg", ".jpeg"}
+LIVE_PHOTO_VIDEO_EXTS = {".mov"}
 
 RUN_CONTEXT_FIELDS = [
     "run_src",
@@ -70,6 +87,8 @@ RUN_CONTEXT_FIELDS = [
     "run_recursive",
     "run_keep_structure",
     "run_windows",
+    "run_live_photos",
+    "run_exiftool",
     "run_timeout",
     "run_workers",
     "run_quiet",
@@ -92,6 +111,7 @@ SUMMARY_COUNT_KEYS = [
     "damaged_videos",
     "damaged_others",
     "damaged_sidecars",
+    "live_photo_pairs",
     "errors",
     "skipped_resume_completed",
 ]
@@ -124,7 +144,21 @@ class Stats(BaseStats):
         with self.lock:
             self.unchangedFiles.append(filename)
 
-    def addCsvRow(self, source, dest, dateValue, dateOffset, mediaType, action, dateSource, processedOk, error):
+    def addCsvRow(
+        self,
+        source,
+        dest,
+        dateValue,
+        dateOffset,
+        mediaType,
+        action,
+        dateSource,
+        processedOk,
+        error,
+        pairType="",
+        pairId="",
+        pairedSource="",
+    ):
         source = str(source)
         sourceKey = pathKey(source)
         row = {
@@ -135,6 +169,9 @@ class Stats(BaseStats):
             "media_type": mediaType,
             "action": action,
             "date_source": dateSource,
+            "pair_type": pairType,
+            "pair_id": pairId,
+            "paired_source": "" if not pairedSource else str(pairedSource),
             "processed_ok": processedOk,
             "error": error,
         }
@@ -214,6 +251,8 @@ def buildRunContext(args, src, dest):
         "run_recursive": args.recursive,
         "run_keep_structure": args.keep_structure,
         "run_windows": args.windows,
+        "run_live_photos": args.live_photos,
+        "run_exiftool": args.exiftool,
         "run_timeout": args.timeout,
         "run_workers": args.workers,
         "run_quiet": args.quiet,
@@ -245,6 +284,11 @@ def buildEffectiveCommand(args, src, dest):
     if args.windows:
         parts.append("--windows")
 
+    if not args.live_photos:
+        parts.append("--no-live-photos")
+
+    parts.extend(["--exiftool", str(args.exiftool)])
+
     if args.quiet:
         parts.append("--quiet")
 
@@ -269,6 +313,11 @@ def applyRunDefaults(args, resumeContext, inheritInputMode):
 
     if args.windows is None:
         args.windows = metadataBool(resumeContext.get("run_windows"), False)
+
+    if args.live_photos is None:
+        args.live_photos = metadataBool(resumeContext.get("run_live_photos"), True)
+
+    args.exiftool = args.exiftool if args.exiftool is not None else (resumeContext.get("run_exiftool") or "exiftool")
 
     if args.quiet is None:
         args.quiet = metadataBool(resumeContext.get("run_quiet"), False)
@@ -306,6 +355,9 @@ def parseArgs():
 
     parser.add_argument("-w", "--windows", action="store_true", default=None, help="Use filesystem modified time as a fallback.")
     parser.add_argument("--no-windows", dest="windows", action="store_false", help="Disable Windows/filesystem fallback when resuming.")
+    parser.add_argument("--live-photos", dest="live_photos", action="store_true", default=None, help="Confirm Apple image/.MOV Live Photo pairs using ExifTool identifiers. Enabled by default.")
+    parser.add_argument("--no-live-photos", dest="live_photos", action="store_false", help="Do not identify or pair Apple Live Photos.")
+    parser.add_argument("--exiftool", default=None, help="ExifTool executable path used to identify Live Photo pairs. Default: exiftool.")
 
     parser.add_argument("--timeout", type=positiveInt, default=None, help="Legacy per-file timeout setting recorded in logs. Default: 30.")
     parser.add_argument("--workers", type=int, default=None, help=f"Max threads. 0 = auto. Default: {DEFAULT_WORKERS}.")
@@ -447,6 +499,22 @@ def videoDate(path, useWindows):
 # Core logic
 # ----------------------
 
+def captureDateForMedia(path, args, sidecarMap):
+    sidecarDate = captureDateFromAssociatedSidecars(path, extraSidecars=sidecarMap.get(pathKey(path), []))
+
+    if sidecarDate:
+        return sidecarDate.filenameValue, sidecarDate.offset, sidecarDate.source
+
+    if isImage(path):
+        dateValue, dateSource = imageDate(str(path), args.windows)
+    elif isVideo(path):
+        dateValue, dateSource = videoDate(str(path), args.windows)
+    else:
+        return None, "", ""
+
+    return dateValue, "", dateSource
+
+
 def targetDirFor(path, srcRoot, dest, keepStructure):
     if keepStructure:
         return dest / relDirFor(str(path), str(srcRoot))
@@ -462,10 +530,15 @@ def sonySidecarRegex(stem):
     return re.compile(rf"^{re.escape(stem)}M\d+$", re.IGNORECASE)
 
 
-def findAssociatedSidecars(mediaPath, sidecarCandidates):
+def findAssociatedSidecars(mediaPath, sidecarCandidates, livePhotoMap=None):
     sidecars = []
     mediaStem = mediaPath.stem
     sonyPattern = sonySidecarRegex(mediaStem)
+    isLivePhotoVideo = (
+        livePhotoMap
+        and isVideo(mediaPath)
+        and pathKey(mediaPath) in livePhotoMap
+    )
 
     for candidate in sidecarCandidates:
         if candidate.parent != mediaPath.parent:
@@ -473,7 +546,10 @@ def findAssociatedSidecars(mediaPath, sidecarCandidates):
 
         candidateStem = candidate.stem
 
-        if candidateStem.lower() == mediaStem.lower() or sonyPattern.match(candidateStem):
+        if candidateStem.lower() == mediaStem.lower():
+            if not isLivePhotoVideo:
+                sidecars.append(candidate)
+        elif sonyPattern.match(candidateStem):
             sidecars.append(candidate)
 
     return sorted(sidecars, key=lambda p: p.name.lower())
@@ -506,20 +582,230 @@ def sidecarSuffixFor(mediaPath, sidecarPath, allSidecars):
     return sidecarExt
 
 
-def buildSidecarMap(files):
+def buildSidecarMap(files, livePhotoMap=None):
     mediaFiles = [path for path in files if isImage(path) or isVideo(path)]
     sidecarCandidates = [path for path in files if isSidecar(path)]
     sidecarMap = {}
     associated = set()
 
     for mediaPath in mediaFiles:
-        sidecars = findAssociatedSidecars(mediaPath, sidecarCandidates)
+        sidecars = findAssociatedSidecars(mediaPath, sidecarCandidates, livePhotoMap=livePhotoMap)
 
         if sidecars:
             sidecarMap[pathKey(mediaPath)] = sidecars
             associated.update(pathKey(sidecar) for sidecar in sidecars)
 
     return sidecarMap, associated
+
+
+def addLivePhotoPair(livePhotoMap, livePhotoIds, imagePath, videoPath, pairId):
+    pair = (Path(imagePath), Path(videoPath))
+    livePhotoMap[pathKey(imagePath)] = pair
+    livePhotoMap[pathKey(videoPath)] = pair
+    livePhotoIds[pathKey(imagePath)] = pairId
+    livePhotoIds[pathKey(videoPath)] = pairId
+
+
+def isLivePhotoImage(path):
+    return Path(path).suffix.lower() in LIVE_PHOTO_IMAGE_EXTS
+
+
+def livePhotoIdentifierFromMetadata(metadata, isImageFile):
+    wanted = (
+        ("contentidentifier", "mediagroupuuid")
+        if isImageFile
+        else ("contentidentifier",)
+    )
+
+    for key, value in metadata.items():
+        normalized = key.split(":")[-1].casefold()
+
+        if normalized in wanted and str(value).strip():
+            return str(value).strip()
+
+    return ""
+
+
+def readLivePhotoIdentifiers(paths, args):
+    identifiers = {}
+    chunkSize = 100
+
+    for index in range(0, len(paths), chunkSize):
+        chunk = paths[index:index + chunkSize]
+        cmd = [
+            args.exiftool,
+            "-json",
+            "-G1",
+            "-a",
+            "-s",
+            "-Apple:ContentIdentifier",
+            "-XAttr:MediaGroupUUID",
+            "-QuickTime:ContentIdentifier",
+        ] + [str(path) for path in chunk]
+
+        try:
+            proc = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=args.timeout,
+            )
+        except (OSError, subprocess.TimeoutExpired) as e:
+            with printLock:
+                print(f"Warning: Live Photo metadata could not be read with ExifTool: {e}")
+            return {}
+
+        if proc.returncode != 0:
+            detail = proc.stderr.strip() or f"return code {proc.returncode}"
+
+            with printLock:
+                print(f"Warning: Live Photo metadata could not be read with ExifTool: {detail}")
+
+            return {}
+
+        try:
+            rows = json.loads(proc.stdout) if proc.stdout.strip() else []
+        except json.JSONDecodeError as e:
+            with printLock:
+                print(f"Warning: Live Photo metadata returned invalid JSON: {e}")
+            return {}
+
+        for row in rows:
+            source = row.get("SourceFile")
+
+            if not source:
+                continue
+
+            sourcePath = Path(source)
+            identifier = livePhotoIdentifierFromMetadata(row, isLivePhotoImage(sourcePath))
+
+            if identifier:
+                identifiers[pathKey(sourcePath)] = identifier
+
+    return identifiers
+
+
+def buildLivePhotoMap(files, resumeRows, args):
+    enabled = args.live_photos
+
+    if not enabled:
+        return {}, {}
+
+    livePhotoMap = {}
+    livePhotoIds = {}
+    imagePaths = [path for path in files if isLivePhotoImage(path)]
+    videoPaths = [path for path in files if path.suffix.lower() in LIVE_PHOTO_VIDEO_EXTS]
+
+    if imagePaths and videoPaths:
+        identifiers = readLivePhotoIdentifiers(imagePaths + videoPaths, args)
+        imagesById = {}
+        videosById = {}
+
+        for path in imagePaths:
+            identifier = identifiers.get(pathKey(path), "")
+
+            if identifier:
+                imagesById.setdefault(identifier.casefold(), []).append(path)
+
+        for path in videoPaths:
+            identifier = identifiers.get(pathKey(path), "")
+
+            if identifier:
+                videosById.setdefault(identifier.casefold(), []).append(path)
+
+        for key, images in imagesById.items():
+            videos = videosById.get(key, [])
+
+            if len(images) == 1 and len(videos) == 1:
+                pairId = identifiers[pathKey(images[0])]
+                addLivePhotoPair(livePhotoMap, livePhotoIds, images[0], videos[0], pairId)
+
+    # Restore a pair when one half was already moved during an earlier run.
+    for row in resumeRows:
+        if (row.get("pair_type") or "") != "live_photo" or not row.get("paired_source"):
+            continue
+
+        source = Path(row["source"])
+        pairedSource = Path(row["paired_source"])
+        pairId = row.get("pair_id", "")
+
+        if isLivePhotoImage(source) and pairedSource.suffix.lower() in LIVE_PHOTO_VIDEO_EXTS:
+            addLivePhotoPair(livePhotoMap, livePhotoIds, source, pairedSource, pairId)
+        elif isLivePhotoImage(pairedSource) and source.suffix.lower() in LIVE_PHOTO_VIDEO_EXTS:
+            addLivePhotoPair(livePhotoMap, livePhotoIds, pairedSource, source, pairId)
+
+    return livePhotoMap, livePhotoIds
+
+
+def buildLivePhotoDateMap(livePhotoMap, sidecarMap, resumeRows, args):
+    livePhotoDates = {}
+    resumeRowBySource = rowsBySource(resumeRows)
+    pairs = {tuple(str(path) for path in pair): pair for pair in livePhotoMap.values()}
+
+    for imagePath, videoPath in pairs.values():
+        selectedPath = None
+        dateValue = None
+        dateOffset = ""
+        dateSource = ""
+
+        for path in (imagePath, videoPath):
+            row = resumeRowBySource.get(pathKey(path), {})
+
+            if row and isCompletedCsvRow(row) and row.get("date"):
+                selectedPath = path
+                dateValue = row["date"]
+                dateOffset = row.get("date_offset", "")
+                dateSource = row.get("date_source", "")
+                break
+
+        if not dateValue:
+            for path in (imagePath, videoPath):
+                if not path.exists():
+                    continue
+
+                candidateDate, candidateOffset, candidateSource = captureDateForMedia(path, args, sidecarMap)
+
+                if candidateDate:
+                    selectedPath = path
+                    dateValue = candidateDate
+                    dateOffset = candidateOffset
+                    dateSource = candidateSource
+                    break
+
+        if not dateValue:
+            continue
+
+        for path in (imagePath, videoPath):
+            source = dateSource if pathKey(path) == pathKey(selectedPath) else f"live-photo:{dateSource}"
+            livePhotoDates[pathKey(path)] = (dateValue, dateOffset, source)
+
+    return livePhotoDates
+
+
+def buildResumedLivePhotoDestinations(livePhotoMap, resumeRows):
+    destinations = {}
+
+    for row in resumeRows:
+        source = row.get("source")
+        dest = row.get("dest")
+
+        if (
+            not source
+            or not dest
+            or pathKey(source) not in livePhotoMap
+            or not isCompletedCsvRow(row)
+        ):
+            continue
+
+        sourcePath = Path(source)
+        destPath = Path(dest)
+        pair = livePhotoMap[pathKey(sourcePath)]
+        pairedPath = pair[1] if pathKey(sourcePath) == pathKey(pair[0]) else pair[0]
+        destinations[pathKey(sourcePath)] = destPath
+        destinations[pathKey(pairedPath)] = destPath.with_name(f"{destPath.stem}{pairedPath.suffix}")
+
+    return destinations
 
 
 def uniqueMediaPath(name, ext, targetDir, sidecars):
@@ -531,6 +817,33 @@ def uniqueMediaPath(name, ext, targetDir, sidecars):
 
         if not candidate.exists() and not any(sidecarPathFor(candidate, sidecarSuffixFor(candidate, sidecar, sidecars)).exists() for sidecar in sidecars):
             return candidate
+
+        name = f"{base}_({counter})"
+        counter += 1
+
+
+def uniqueLivePhotoPaths(name, pair, srcRoot, dest, args, sidecarMap):
+    base = name
+    counter = 1
+
+    while True:
+        destinations = {
+            pathKey(path): targetDirFor(path, srcRoot, dest, args.keep_structure) / f"{name}{path.suffix}"
+            for path in pair
+        }
+        conflicts = []
+
+        for path in pair:
+            destination = destinations[pathKey(path)]
+            sidecars = sidecarMap.get(pathKey(path), [])
+            conflicts.append(destination.exists())
+            conflicts.extend(
+                sidecarPathFor(destination, sidecarSuffixFor(path, sidecar, sidecars)).exists()
+                for sidecar in sidecars
+            )
+
+        if not any(conflicts):
+            return destinations
 
         name = f"{base}_({counter})"
         counter += 1
@@ -650,7 +963,7 @@ def incDateSource(stats, mediaType, dateSource):
             stats.inc("windows_videos")
 
 
-def processOne(path, srcRoot, dest, args, stats, sidecarMap):
+def processOne(path, srcRoot, dest, args, stats, sidecarMap, livePhotoMap, livePhotoIds, livePhotoDates, livePhotoDestinations):
     if stopEvent.is_set():
         return
 
@@ -658,6 +971,9 @@ def processOne(path, srcRoot, dest, args, stats, sidecarMap):
     dateValue = None
     dateOffset = ""
     dateSource = ""
+    pairType = ""
+    pairId = ""
+    pairedSource = ""
     errorKey = "damaged_others"
     unchanged = False
 
@@ -672,17 +988,17 @@ def processOne(path, srcRoot, dest, args, stats, sidecarMap):
         source = str(path)
         originalName, ext = os.path.splitext(os.path.basename(source))
         newName = originalName
+        livePhotoPair = livePhotoMap.get(pathKey(path))
 
-        sidecarDate = captureDateFromAssociatedSidecars(source, extraSidecars=sidecarMap.get(pathKey(path), []))
+        if livePhotoPair:
+            pairType = "live_photo"
+            pairId = livePhotoIds.get(pathKey(path), "")
+            pairedSource = livePhotoPair[1] if pathKey(path) == pathKey(livePhotoPair[0]) else livePhotoPair[0]
 
-        if sidecarDate:
-            dateValue = sidecarDate.filenameValue
-            dateOffset = sidecarDate.offset
-            dateSource = sidecarDate.source
-        elif mediaType == "image":
-            dateValue, dateSource = imageDate(source, args.windows)
-        elif mediaType == "video":
-            dateValue, dateSource = videoDate(source, args.windows)
+        if pathKey(path) in livePhotoDates:
+            dateValue, dateOffset, dateSource = livePhotoDates[pathKey(path)]
+        else:
+            dateValue, dateOffset, dateSource = captureDateForMedia(path, args, sidecarMap)
 
         if dateValue:
             newName = dateValue
@@ -698,10 +1014,20 @@ def processOne(path, srcRoot, dest, args, stats, sidecarMap):
             if stopEvent.is_set():
                 return
 
-            targetDir = targetDirFor(path, srcRoot, dest, args.keep_structure)
-            targetDir.mkdir(parents=True, exist_ok=True)
             sidecars = sidecarMap.get(pathKey(path), [])
-            fullPath = uniqueMediaPath(newName, ext, targetDir, sidecars)
+
+            if livePhotoPair:
+                if pathKey(path) not in livePhotoDestinations:
+                    livePhotoDestinations.update(
+                        uniqueLivePhotoPaths(newName, livePhotoPair, srcRoot, dest, args, sidecarMap)
+                    )
+
+                fullPath = livePhotoDestinations[pathKey(path)]
+            else:
+                targetDir = targetDirFor(path, srcRoot, dest, args.keep_structure)
+                fullPath = uniqueMediaPath(newName, ext, targetDir, sidecars)
+
+            fullPath.parent.mkdir(parents=True, exist_ok=True)
             copyOrMove(source, fullPath, args.copy)
 
         incMediaTotal(stats, mediaType)
@@ -713,7 +1039,20 @@ def processOne(path, srcRoot, dest, args, stats, sidecarMap):
             stats.inc("unchanged_videos")
             stats.addUnchanged(source)
 
-        stats.addCsvRow(source, fullPath, dateValue, dateOffset, mediaType, "copy" if args.copy else "move", dateSource, True, "")
+        stats.addCsvRow(
+            source,
+            fullPath,
+            dateValue,
+            dateOffset,
+            mediaType,
+            "copy" if args.copy else "move",
+            dateSource,
+            True,
+            "",
+            pairType=pairType,
+            pairId=pairId,
+            pairedSource=pairedSource,
+        )
 
         if not args.quiet:
             with printLock:
@@ -734,7 +1073,20 @@ def processOne(path, srcRoot, dest, args, stats, sidecarMap):
         stats.inc(errorKey)
         stats.inc("errors")
         stats.addDamaged(source)
-        stats.addCsvRow(source, None, dateValue, dateOffset, mediaType, "copy" if args.copy else "move", dateSource, False, str(e))
+        stats.addCsvRow(
+            source,
+            None,
+            dateValue,
+            dateOffset,
+            mediaType,
+            "copy" if args.copy else "move",
+            dateSource,
+            False,
+            str(e),
+            pairType=pairType,
+            pairId=pairId,
+            pairedSource=pairedSource,
+        )
 
         with printLock:
             print(f"[err] {source}: {e}")
@@ -742,7 +1094,18 @@ def processOne(path, srcRoot, dest, args, stats, sidecarMap):
 
 def renameMedia(src, dest, args, resumeCompletedSources, resumeRows, stats):
     files = list(iterFiles(src, args.recursive, inputTxt=args.input_txt, printLock=printLock))
-    sidecarMap, associatedSidecars = buildSidecarMap(files)
+    livePhotoMap, livePhotoIds = buildLivePhotoMap(files, resumeRows, args)
+    sidecarMap, associatedSidecars = buildSidecarMap(files, livePhotoMap=livePhotoMap)
+    livePhotoDates = buildLivePhotoDateMap(livePhotoMap, sidecarMap, resumeRows, args)
+    livePhotoDestinations = buildResumedLivePhotoDestinations(livePhotoMap, resumeRows)
+    livePhotoPairs = {tuple(str(path) for path in pair) for pair in livePhotoMap.values()}
+
+    if livePhotoPairs:
+        stats.inc("live_photo_pairs", len(livePhotoPairs))
+
+        with printLock:
+            print(f"Live Photo pairs detected: {len(livePhotoPairs)}")
+
     resumeRowBySource = rowsBySource(resumeRows)
     retrySidecarsForCompletedMedia(files, sidecarMap, resumeCompletedSources, resumeRowBySource, args, stats)
     files = [path for path in files if pathKey(path) not in associatedSidecars]
@@ -772,7 +1135,18 @@ def renameMedia(src, dest, args, resumeCompletedSources, resumeRows, stats):
 
     runParallel(
         files,
-        workerFn=lambda path: processOne(path, srcRoot, dest, args, stats, sidecarMap),
+        workerFn=lambda path: processOne(
+            path,
+            srcRoot,
+            dest,
+            args,
+            stats,
+            sidecarMap,
+            livePhotoMap,
+            livePhotoIds,
+            livePhotoDates,
+            livePhotoDestinations,
+        ),
         maxWorkers=args.workers,
         stopEvent=stopEvent,
         onError=onError,
