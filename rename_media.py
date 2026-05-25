@@ -21,6 +21,7 @@ from wand.exceptions import CorruptImageWarning
 from media_tools.capture_dates import captureDateFromAssociatedSidecars
 from media_tools.media_common import (
     BaseStats,
+    effectiveCommandPrefix,
     isImage,
     isSubpath,
     isVideo,
@@ -262,7 +263,7 @@ def buildRunContext(args, src, dest):
 
 
 def buildEffectiveCommand(args, src, dest):
-    parts = ["python", "rename_media.py"]
+    parts = effectiveCommandPrefix("rename_media.py", "rename")
 
     if args.copy:
         parts.append("--copy")

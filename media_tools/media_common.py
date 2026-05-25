@@ -197,6 +197,13 @@ def datetimeToExiftool(dt):
     return dt.strftime("%Y:%m:%d %H:%M:%S")
 
 
+def effectiveCommandPrefix(scriptName, subcommand):
+    if os.environ.get("DATEFRAME_SUBCOMMAND") == subcommand:
+        return ["dateframe", subcommand]
+
+    return ["python", scriptName]
+
+
 def dtFromFilename(path):
     stem = Path(path).stem
     match = FILENAME_DT_RE.match(stem)

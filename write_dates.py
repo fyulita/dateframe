@@ -10,6 +10,7 @@ from media_tools.capture_dates import CaptureDate, captureDateFromAssociatedSide
 from media_tools.media_common import (
     BaseStats,
     UNSUPPORTED_EMBED_WRITE,
+    effectiveCommandPrefix,
     isImage,
     isVideo,
     iterFiles,
@@ -176,7 +177,7 @@ def buildRunContext(args, src):
 
 
 def buildEffectiveCommand(args, src):
-    parts = ["python", "write_dates.py"]
+    parts = effectiveCommandPrefix("write_dates.py", "write-dates")
 
     if args.input_txt:
         parts.append("--input-txt")

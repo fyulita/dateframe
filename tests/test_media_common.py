@@ -2,6 +2,7 @@ import datetime
 
 from media_tools.media_common import (
     dtFromFilename,
+    effectiveCommandPrefix,
     inDateRange,
     iterFiles,
     parseOptionalDateRange,
@@ -37,3 +38,11 @@ def testTxtInputIgnoresCommentsAndInvalidPaths(tmp_path):
     )
 
     assert iterFiles(inputTxt, recursive=False, inputTxt=True) == [first.resolve(), second.resolve()]
+
+
+def testEffectiveCommandPrefixUsesPublicCliOnlyWhenDispatched(monkeypatch):
+    assert effectiveCommandPrefix("rename_media.py", "rename") == ["python", "rename_media.py"]
+
+    monkeypatch.setenv("DATEFRAME_SUBCOMMAND", "rename")
+
+    assert effectiveCommandPrefix("rename_media.py", "rename") == ["dateframe", "rename"]

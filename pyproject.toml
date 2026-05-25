@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dateframe"
+version = "0.1.0"
+description = "Organize photos and videos by capture date while preserving metadata and resumable workflows."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "GPL-3.0-only"
+license-files = ["LICENSE.md"]
+keywords = ["photos", "videos", "metadata", "exif", "icloud", "live-photos"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Topic :: Multimedia :: Graphics",
+    "Topic :: Multimedia :: Video",
+]
+dependencies = [
+    "ffmpeg-python>=0.2.0",
+    "Pillow>=11.3.0",
+    "Wand>=0.6.13",
+    "pywin32>=311; platform_system == 'Windows'",
+]
+
+[project.urls]
+Repository = "https://github.com/fyulita/dateframe"
+Issues = "https://github.com/fyulita/dateframe/issues"
+
+[project.scripts]
+dateframe = "dateframe_cli:main"
+
+[tool.setuptools]
+py-modules = [
+    "copy_icloud",
+    "dateframe_cli",
+    "list_extensions",
+    "read_metadata",
+    "rename_media",
+    "write_dates",
+]
+
+[tool.setuptools.packages.find]
+include = ["media_tools*"]

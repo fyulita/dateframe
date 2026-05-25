@@ -1,6 +1,6 @@
-# Contributing to rename-media
+# Contributing to DateFrame
 
-Thanks for helping improve `rename-media`. Contributions are welcome for bug fixes, platform compatibility, metadata handling, documentation, and carefully scoped workflow improvements.
+Thanks for helping improve DateFrame. Contributions are welcome for bug fixes, platform compatibility, metadata handling, documentation, and carefully scoped workflow improvements.
 
 ## Before contributing
 
@@ -13,8 +13,8 @@ Never include private media files in an issue or pull request. Logs may expose l
 Clone the repository and create a virtual environment:
 
 ```powershell
-git clone https://github.com/fyulita/rename-media.git
-cd rename-media
+git clone https://github.com/fyulita/dateframe.git
+cd dateframe
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements-dev.txt
@@ -84,7 +84,7 @@ python -m pytest
 Also verify that edited scripts compile:
 
 ```powershell
-python -m py_compile copy_icloud.py rename_media.py write_dates.py read_metadata.py list_extensions.py media_tools\__init__.py media_tools\capture_dates.py media_tools\copy_icloud_config.py media_tools\media_common.py media_tools\media_logging.py media_tools\metadata_writer.py media_tools\windows_metadata.py
+python -m py_compile dateframe_cli.py copy_icloud.py rename_media.py write_dates.py read_metadata.py list_extensions.py media_tools\__init__.py media_tools\capture_dates.py media_tools\copy_icloud_config.py media_tools\media_common.py media_tools\media_logging.py media_tools\metadata_writer.py media_tools\windows_metadata.py
 ```
 
 For behavior changes, run the relevant command against a small temporary sample folder and inspect its output and logs.
