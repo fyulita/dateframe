@@ -50,3 +50,8 @@ py-modules = [
 
 [tool.setuptools.packages.find]
 include = ["media_tools*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+cache_dir = "logs/pytest-cache"
+addopts = "--basetemp=logs/pytest-temp"
