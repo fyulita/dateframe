@@ -1,6 +1,8 @@
 *venv/
 __pycache__
 .pytest_cache/
+.pytest-cache/
+.pytest-temp/
 logs/
 todo.md
 build/
