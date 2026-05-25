@@ -1,0 +1,96 @@
+name: Bug Report
+description: Report incorrect behavior in DateFrame.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve DateFrame.
+
+        Do not attach personal media files or unredacted logs. If the issue could expose private information, damage files unexpectedly, or create a security risk, please use the private reporting instructions in [SECURITY.md](https://github.com/fyulita/dateframe/blob/main/SECURITY.md) instead.
+
+  - type: dropdown
+    id: command
+    attributes:
+      label: Affected command
+      description: Which DateFrame command shows the issue?
+      options:
+        - dateframe import-icloud
+        - dateframe rename
+        - dateframe write-dates
+        - dateframe inspect
+        - dateframe extensions
+        - Installation or packaging
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: DateFrame version
+      description: Run `pip show dateframe` if you installed the package from PyPI.
+      placeholder: "0.1.0"
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Include operating system and Python version.
+      placeholder: "Windows 11, Python 3.13"
+    validations:
+      required: true
+
+  - type: textarea
+    id: command_run
+    attributes:
+      label: Command used
+      description: Paste the command with private paths and names redacted.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: media_context
+    attributes:
+      label: Media and run context
+      description: Describe relevant file types, metadata or sidecars, and whether this was a new run or a resume from CSV/checkpoint.
+      placeholder: "HEIC and MOV Live Photo pair; new `rename` run; sidecar present: no."
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should have happened?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What happened instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sanitized output or log excerpt
+      description: Include only the smallest useful terminal or CSV/TXT excerpt, with paths and metadata values redacted as needed.
+      render: text
+
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy confirmation
+      options:
+        - label: I removed or redacted personal paths, filenames, metadata, and media files from this public report.
+          required: true
+
