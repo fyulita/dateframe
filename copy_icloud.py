@@ -15,6 +15,7 @@ from media_tools.copy_icloud_config import (
     buildRunContext,
     parseArgs,
 )
+from media_tools.capture_dates import captureDateFromEmbeddedMedia
 from media_tools.media_common import (
     BaseStats,
     datetimeToExiftool,
@@ -208,6 +209,50 @@ def copyWithRetry(src, dest, stats, retries=5, delay=3.0):
     raise lastError
 
 
+def dateWithEmbeddedSeconds(path, shellDate, options):
+    if shellDate.second != 0:
+        return shellDate, False
+
+    embeddedDate = captureDateFromEmbeddedMedia(
+        path,
+        exiftoolPath=options.exiftoolPath,
+        timeout=options.timeout,
+    )
+
+    if embeddedDate is None:
+        return shellDate, False
+
+    candidate = datetime.datetime.strptime(embeddedDate.displayValue, "%Y-%m-%d %H:%M:%S")
+
+    if candidate.replace(second=0, microsecond=0) != shellDate.replace(second=0, microsecond=0):
+        return shellDate, False
+
+    return candidate, candidate != shellDate
+
+
+def embeddedCaptureDate(path, options):
+    embeddedDate = captureDateFromEmbeddedMedia(
+        path,
+        exiftoolPath=options.exiftoolPath,
+        timeout=options.timeout,
+    )
+
+    if embeddedDate is None:
+        return None
+
+    return datetime.datetime.strptime(embeddedDate.displayValue, "%Y-%m-%d %H:%M:%S")
+
+
+def metadataWithRefinedDate(metadata, shellDateColumn, dateValue):
+    if shellDateColumn not in metadata:
+        return metadata
+
+    adjusted = dict(metadata)
+    adjusted[shellDateColumn] = datetimeToExiftool(dateValue)
+
+    return adjusted
+
+
 # ----------------------
 # Core logic
 # ----------------------
@@ -288,15 +333,24 @@ def processOne(
 
         shellDate, shellDateColumn = getShellDate(path, dateOrder=options.dateOrder)
 
+        usedEmbeddedSeconds = False
+
         if shellDate is None:
-            stats.inc("skipped_no_date")
-            stats.addCsvRow(path, None, None, "", "", "no shell date")
-            return
+            shellDate = embeddedCaptureDate(path, options)
+            shellDateColumn = "embedded metadata"
+
+            if shellDate is None:
+                stats.inc("skipped_no_date")
+                stats.addCsvRow(path, None, None, "", "", "no shell or embedded date")
+                return
 
         if not inDateRange(shellDate, options.fromDate, options.toDate):
             stats.inc("skipped_outside_date_range")
             stats.addCsvRow(path, None, shellDate, "", "", "outside date range")
             return
+
+        if shellDateColumn != "embedded metadata":
+            shellDate, usedEmbeddedSeconds = dateWithEmbeddedSeconds(path, shellDate, options)
 
         if isImage(path):
             stats.inc("processed_images")
@@ -304,6 +358,9 @@ def processOne(
             stats.inc("processed_videos")
 
         metadata = getAllShellMetadata(path)
+
+        if usedEmbeddedSeconds:
+            metadata = metadataWithRefinedDate(metadata, shellDateColumn, shellDate)
 
         if options.keepStructure and srcMode == "folder":
             relDir = relDirFor(str(path), str(src))
@@ -323,7 +380,8 @@ def processOne(
             if not options.quiet:
                 with printLock:
                     print("[METADATA RETRY]")
-                    print(f"  DATE: {shellDate} ({shellDateColumn})")
+                    dateDetail = f"{shellDateColumn} + embedded seconds" if usedEmbeddedSeconds else shellDateColumn
+                    print(f"  DATE: {shellDate} ({dateDetail})")
                     print(f"  FROM: {path}")
                     print(f"  TO:   {outPath}")
                     print()
@@ -358,8 +416,9 @@ def processOne(
 
             if not options.quiet:
                 with printLock:
+                    dateDetail = f"{shellDateColumn} + embedded seconds" if usedEmbeddedSeconds else shellDateColumn
                     print("[COPY]")
-                    print(f"  DATE: {shellDate} ({shellDateColumn})")
+                    print(f"  DATE: {shellDate} ({dateDetail})")
                     print(f"  FROM: {path}")
                     print(f"  TO:   {outPath}")
                     print()
