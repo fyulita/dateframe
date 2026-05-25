@@ -4,6 +4,7 @@ import threading
 import pytest
 
 import copy_icloud
+from media_tools.capture_dates import CaptureDate
 from media_tools.copy_icloud_config import CopyOptions, ResumeState
 
 
@@ -74,6 +75,112 @@ def testProcessOneCopiesMediaAndWritesMetadata(tmp_path, monkeypatch):
     assert row["copied_ok"] is True
     assert row["metadata_ok"] is True
     assert row["error"] == ""
+
+
+def testProcessOnePreservesEmbeddedSecondsMatchingShellMinute(tmp_path, monkeypatch):
+    src = tmp_path / "src"
+    dest = tmp_path / "dest"
+    src.mkdir()
+    source = src / "IMG_0275.HEIC"
+    source.write_bytes(b"live photo still")
+    written = []
+
+    monkeypatch.setattr(
+        copy_icloud,
+        "getShellDate",
+        lambda path, dateOrder: (datetime.datetime(2026, 5, 25, 15, 36, 0), "Date taken"),
+    )
+    monkeypatch.setattr(
+        copy_icloud,
+        "getAllShellMetadata",
+        lambda path: {"Date taken": "2026-05-25 15:36"},
+    )
+    monkeypatch.setattr(
+        copy_icloud,
+        "captureDateFromEmbeddedMedia",
+        lambda *args, **kwargs: CaptureDate(
+            filenameValue="2026-05-25T15-36-28",
+            exiftoolValue="2026:05:25 15:36:28",
+            displayValue="2026-05-25 15:36:28",
+            offset="",
+            source="embedded:DateTimeOriginal",
+        ),
+    )
+
+    def fakeWriteEmbeddedMetadata(**kwargs):
+        written.append(kwargs["metadata"])
+        return 0, ""
+
+    monkeypatch.setattr(copy_icloud, "writeEmbeddedMetadata", fakeWriteEmbeddedMetadata)
+
+    stats = copy_icloud.Stats()
+    copy_icloud.processOne(source, src, "folder", dest, copyOptions(), stats)
+
+    copied = dest / "2026-05-25T15-36-28.heic"
+    assert copied.exists()
+    assert written == [{"Date taken": "2026:05:25 15:36:28"}]
+    assert stats.getCsvRows()[0]["date"] == "2026-05-25 15:36:28"
+
+
+def testProcessOneDoesNotUseEmbeddedDateFromDifferentMinute(tmp_path, monkeypatch):
+    src = tmp_path / "src"
+    dest = tmp_path / "dest"
+    src.mkdir()
+    source = src / "IMG_0001.HEIC"
+    source.write_bytes(b"image")
+
+    monkeypatch.setattr(
+        copy_icloud,
+        "getShellDate",
+        lambda path, dateOrder: (datetime.datetime(2026, 5, 25, 15, 36, 0), "Date taken"),
+    )
+    monkeypatch.setattr(
+        copy_icloud,
+        "captureDateFromEmbeddedMedia",
+        lambda *args, **kwargs: CaptureDate(
+            filenameValue="2020-01-01T10-00-28",
+            exiftoolValue="2020:01:01 10:00:28",
+            displayValue="2020-01-01 10:00:28",
+            offset="",
+            source="embedded:DateTimeOriginal",
+        ),
+    )
+    monkeypatch.setattr(copy_icloud, "writeEmbeddedMetadata", lambda **kwargs: (0, ""))
+
+    stats = copy_icloud.Stats()
+    copy_icloud.processOne(source, src, "folder", dest, copyOptions(), stats)
+
+    assert (dest / "2026-05-25T15-36-00.heic").exists()
+    assert stats.getCsvRows()[0]["date"] == "2026-05-25 15:36:00"
+
+
+def testProcessOneFallsBackToEmbeddedDateWithoutShellDate(tmp_path, monkeypatch):
+    src = tmp_path / "src"
+    dest = tmp_path / "dest"
+    src.mkdir()
+    source = src / "IMG_0275.HEIC"
+    source.write_bytes(b"live photo still")
+
+    monkeypatch.setattr(copy_icloud, "getShellDate", lambda path, dateOrder: (None, None))
+    monkeypatch.setattr(
+        copy_icloud,
+        "captureDateFromEmbeddedMedia",
+        lambda *args, **kwargs: CaptureDate(
+            filenameValue="2026-05-25T15-36-28",
+            exiftoolValue="2026:05:25 15:36:28",
+            displayValue="2026-05-25 15:36:28",
+            offset="",
+            source="embedded:DateTimeOriginal",
+        ),
+    )
+    monkeypatch.setattr(copy_icloud, "writeEmbeddedMetadata", lambda **kwargs: (0, ""))
+
+    stats = copy_icloud.Stats()
+    copy_icloud.processOne(source, src, "folder", dest, copyOptions(), stats)
+
+    assert (dest / "2026-05-25T15-36-28.heic").exists()
+    assert stats.getCsvRows()[0]["date"] == "2026-05-25 15:36:28"
+    assert stats.getCsvRows()[0]["error"] == ""
 
 
 def testProcessOneOutsideDateRangeDoesNotCopy(tmp_path, monkeypatch):

@@ -1,4 +1,5 @@
 from media_tools.capture_dates import (
+    captureDateFromEmbeddedMedia,
     captureDateFromAssociatedSidecars,
     captureDateFromXml,
     exiftoolDateWithOffset,
@@ -6,6 +7,23 @@ from media_tools.capture_dates import (
     offsetTags,
     parseCaptureDate,
 )
+
+
+def testCaptureDateFromEmbeddedMediaReadsExactExifSeconds(tmp_path, monkeypatch):
+    media = tmp_path / "IMG_0001.HEIC"
+    media.touch()
+
+    class Result:
+        returncode = 0
+        stdout = '[{"DateTimeOriginal":"2026:05:25 15:36:28"}]'
+        stderr = ""
+
+    monkeypatch.setattr("media_tools.capture_dates.subprocess.run", lambda *args, **kwargs: Result())
+
+    parsed = captureDateFromEmbeddedMedia(media)
+
+    assert parsed.displayValue == "2026-05-25 15:36:28"
+    assert parsed.source == "embedded:DateTimeOriginal"
 
 
 def testParseCaptureDatePreservesLocalTimeAndNormalizesOffset():

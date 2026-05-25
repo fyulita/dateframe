@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 # capture_dates.py
 
+import json
 import re
+import subprocess
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
 
-from media_tools.media_common import sidecarPathFor
+from media_tools.media_common import isImage, isVideo, sidecarPathFor
 
 
 DATETIME_RE = re.compile(
@@ -27,6 +29,19 @@ XMP_DATE_PRIORITY = [
     "subsecmediacreatedate",
     "datetimecreated",
     "datecreated",
+]
+
+EMBEDDED_IMAGE_DATE_TAGS = [
+    "DateTimeOriginal",
+    "CreateDate",
+    "DateTimeDigitized",
+]
+
+EMBEDDED_VIDEO_DATE_TAGS = [
+    "DateTimeOriginal",
+    "CreateDate",
+    "MediaCreateDate",
+    "TrackCreateDate",
 ]
 
 
@@ -87,6 +102,46 @@ def parseCaptureDate(value, source):
         offset=normalizeOffset(parts.get("offset")),
         source=source,
     )
+
+
+def captureDateFromEmbeddedMedia(path, exiftoolPath="exiftool", timeout=30):
+    path = Path(path)
+
+    if isImage(path):
+        tags = EMBEDDED_IMAGE_DATE_TAGS
+    elif isVideo(path):
+        tags = EMBEDDED_VIDEO_DATE_TAGS
+    else:
+        return None
+
+    cmd = [exiftoolPath, "-json", "-s"] + [f"-{tag}" for tag in tags] + [str(path)]
+
+    try:
+        proc = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=timeout,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+    if proc.returncode != 0:
+        return None
+
+    try:
+        metadata = json.loads(proc.stdout)[0]
+    except (IndexError, TypeError, ValueError):
+        return None
+
+    for tag in tags:
+        parsed = parseCaptureDate(metadata.get(tag), f"embedded:{tag}")
+
+        if parsed:
+            return parsed
+
+    return None
 
 
 def xmlLocalName(name):
