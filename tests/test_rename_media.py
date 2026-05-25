@@ -15,16 +15,21 @@ def resetStopEvent():
     rename_media.stopEvent.clear()
 
 
-def renameArgs():
-    return SimpleNamespace(
+def renameArgs(**overrides):
+    values = dict(
         copy=True,
         recursive=False,
         input_txt=False,
         keep_structure=False,
         windows=False,
+        live_photos=True,
+        exiftool="exiftool",
+        timeout=30,
         quiet=True,
         workers=1,
     )
+    values.update(overrides)
+    return SimpleNamespace(**values)
 
 
 def testRenameMediaCopiesImageUsingDetectedDate(tmp_path, monkeypatch):
@@ -82,6 +87,286 @@ def testRenameMediaCopiesSonySidecarWithRenamedVideo(tmp_path):
     assert rows["video"]["processed_ok"] is True
     assert rows["sidecar"]["dest"] == str(renamedXml)
     assert rows["sidecar"]["processed_ok"] is True
+
+
+def testRenameMediaKeepsLivePhotoPairOnImageDate(tmp_path, monkeypatch):
+    src = tmp_path / "src"
+    dest = tmp_path / "dest"
+    src.mkdir()
+    dest.mkdir()
+    image = src / "IMG_0001.HEIC"
+    video = src / "DIFFERENT_NAME.MOV"
+    image.write_bytes(b"live photo image")
+    video.write_bytes(b"live photo video")
+
+    monkeypatch.setattr(
+        rename_media,
+        "readLivePhotoIdentifiers",
+        lambda paths, args: {pathKey(image): "PAIR-1", pathKey(video): "PAIR-1"},
+    )
+    monkeypatch.setattr(
+        rename_media,
+        "imageDate",
+        lambda path, useWindows: ("2026-03-02T10-20-30", "wand:exif:DateTimeOriginal"),
+    )
+    monkeypatch.setattr(
+        rename_media,
+        "videoDate",
+        lambda path, useWindows: ("2026-03-02T10-20-33", "ffmpeg:creation_time"),
+    )
+
+    stats = rename_media.Stats()
+    rename_media.renameMedia(src, dest, renameArgs(), set(), [], stats)
+
+    assert (dest / "2026-03-02T10-20-30.HEIC").exists()
+    assert (dest / "2026-03-02T10-20-30.MOV").exists()
+    rows = {row["source"]: row for row in stats.getCsvRows()}
+    assert rows[str(image)]["pair_type"] == "live_photo"
+    assert rows[str(image)]["pair_id"] == "PAIR-1"
+    assert rows[str(image)]["paired_source"] == str(video)
+    assert rows[str(video)]["pair_type"] == "live_photo"
+    assert rows[str(video)]["paired_source"] == str(image)
+    assert rows[str(video)]["date_source"] == "live-photo:wand:exif:DateTimeOriginal"
+    assert stats.summary()["live_photo_pairs"] == 1
+
+
+def testLivePhotoIdentifierAcceptsAppleAndQuickTimeExiftoolGroups():
+    assert rename_media.livePhotoIdentifierFromMetadata(
+        {"MakerNotes:ContentIdentifier": "PAIR-1"},
+        True,
+    ) == "PAIR-1"
+    assert rename_media.livePhotoIdentifierFromMetadata(
+        {"XAttr:MediaGroupUUID": "PAIR-2"},
+        True,
+    ) == "PAIR-2"
+    assert rename_media.livePhotoIdentifierFromMetadata(
+        {"Keys:ContentIdentifier": "PAIR-1"},
+        False,
+    ) == "PAIR-1"
+
+
+def testRenameMediaAssignsSameStemSidecarOnlyToLivePhotoImage(tmp_path, monkeypatch):
+    src = tmp_path / "src"
+    dest = tmp_path / "dest"
+    src.mkdir()
+    dest.mkdir()
+    image = src / "IMG_0001.JPG"
+    video = src / "IMG_0001.MOV"
+    sidecar = src / "IMG_0001.XMP"
+    image.write_bytes(b"live photo image")
+    video.write_bytes(b"live photo video")
+    sidecar.write_text("<xmpmeta />", encoding="utf-8")
+
+    monkeypatch.setattr(
+        rename_media,
+        "readLivePhotoIdentifiers",
+        lambda paths, args: {pathKey(image): "PAIR-1", pathKey(video): "PAIR-1"},
+    )
+    monkeypatch.setattr(
+        rename_media,
+        "imageDate",
+        lambda path, useWindows: ("2026-03-02T10-20-30", "pillow:DateTimeOriginal"),
+    )
+    monkeypatch.setattr(
+        rename_media,
+        "videoDate",
+        lambda path, useWindows: ("2026-03-02T10-20-33", "ffmpeg:creation_time"),
+    )
+
+    stats = rename_media.Stats()
+    rename_media.renameMedia(src, dest, renameArgs(), set(), [], stats)
+
+    assert (dest / "2026-03-02T10-20-30.JPG.XMP").exists()
+    assert not (dest / "2026-03-02T10-20-30.MOV.XMP").exists()
+    assert sum(1 for row in stats.getCsvRows() if row["media_type"] == "sidecar") == 1
+
+
+def testRenameMediaKeepsLivePhotoBasenameTogetherOnCollision(tmp_path, monkeypatch):
+    src = tmp_path / "src"
+    dest = tmp_path / "dest"
+    src.mkdir()
+    dest.mkdir()
+    image = src / "IMG_0001.HEIC"
+    video = src / "IMG_0001.MOV"
+    image.write_bytes(b"new image")
+    video.write_bytes(b"new video")
+    (dest / "2026-03-02T10-20-30.HEIC").write_bytes(b"existing image")
+
+    monkeypatch.setattr(
+        rename_media,
+        "readLivePhotoIdentifiers",
+        lambda paths, args: {pathKey(image): "PAIR-1", pathKey(video): "PAIR-1"},
+    )
+    monkeypatch.setattr(
+        rename_media,
+        "imageDate",
+        lambda path, useWindows: ("2026-03-02T10-20-30", "wand:exif:DateTimeOriginal"),
+    )
+
+    stats = rename_media.Stats()
+    rename_media.renameMedia(src, dest, renameArgs(), set(), [], stats)
+
+    assert (dest / "2026-03-02T10-20-30_(1).HEIC").exists()
+    assert (dest / "2026-03-02T10-20-30_(1).MOV").exists()
+
+
+def testRenameMediaDoesNotPairSameStemMp4(tmp_path, monkeypatch):
+    src = tmp_path / "src"
+    dest = tmp_path / "dest"
+    src.mkdir()
+    dest.mkdir()
+    image = src / "IMG_0001.JPG"
+    video = src / "IMG_0001.MP4"
+    image.write_bytes(b"image")
+    video.write_bytes(b"video")
+
+    monkeypatch.setattr(
+        rename_media,
+        "imageDate",
+        lambda path, useWindows: ("2026-03-02T10-20-30", "pillow:DateTimeOriginal"),
+    )
+    monkeypatch.setattr(
+        rename_media,
+        "videoDate",
+        lambda path, useWindows: ("2026-03-02T10-20-33", "ffmpeg:creation_time"),
+    )
+
+    stats = rename_media.Stats()
+    rename_media.renameMedia(src, dest, renameArgs(), set(), [], stats)
+
+    assert (dest / "2026-03-02T10-20-30.JPG").exists()
+    assert (dest / "2026-03-02T10-20-33.MP4").exists()
+    assert all(not row["pair_type"] for row in stats.getCsvRows())
+
+
+def testRenameMediaDoesNotPairSameStemMovWithoutMatchingIdentifier(tmp_path, monkeypatch):
+    src = tmp_path / "src"
+    dest = tmp_path / "dest"
+    src.mkdir()
+    dest.mkdir()
+    image = src / "IMG_0001.JPG"
+    video = src / "IMG_0001.MOV"
+    image.write_bytes(b"image")
+    video.write_bytes(b"video")
+
+    monkeypatch.setattr(
+        rename_media,
+        "readLivePhotoIdentifiers",
+        lambda paths, args: {pathKey(image): "IMAGE-ID", pathKey(video): "VIDEO-ID"},
+    )
+    monkeypatch.setattr(
+        rename_media,
+        "imageDate",
+        lambda path, useWindows: ("2026-03-02T10-20-30", "pillow:DateTimeOriginal"),
+    )
+    monkeypatch.setattr(
+        rename_media,
+        "videoDate",
+        lambda path, useWindows: ("2026-03-02T10-20-33", "ffmpeg:creation_time"),
+    )
+
+    stats = rename_media.Stats()
+    rename_media.renameMedia(src, dest, renameArgs(), set(), [], stats)
+
+    assert (dest / "2026-03-02T10-20-30.JPG").exists()
+    assert (dest / "2026-03-02T10-20-33.MOV").exists()
+    assert all(not row["pair_type"] for row in stats.getCsvRows())
+
+
+def testRenameMediaDoesNotPairVideoThumbnailAsLivePhoto(tmp_path, monkeypatch):
+    src = tmp_path / "src"
+    dest = tmp_path / "dest"
+    src.mkdir()
+    dest.mkdir()
+    (src / "CLIP_0001.THM").write_bytes(b"thumbnail")
+    (src / "CLIP_0001.MOV").write_bytes(b"video")
+
+    monkeypatch.setattr(
+        rename_media,
+        "imageDate",
+        lambda path, useWindows: ("2026-03-02T10-20-30", "pillow:DateTimeOriginal"),
+    )
+    monkeypatch.setattr(
+        rename_media,
+        "videoDate",
+        lambda path, useWindows: ("2026-03-02T10-20-33", "ffmpeg:creation_time"),
+    )
+
+    stats = rename_media.Stats()
+    rename_media.renameMedia(src, dest, renameArgs(), set(), [], stats)
+
+    assert (dest / "2026-03-02T10-20-30.THM").exists()
+    assert (dest / "2026-03-02T10-20-33.MOV").exists()
+    assert all(not row["pair_type"] for row in stats.getCsvRows())
+
+
+def testRenameMediaCanDisableLivePhotoPairing(tmp_path, monkeypatch):
+    src = tmp_path / "src"
+    dest = tmp_path / "dest"
+    src.mkdir()
+    dest.mkdir()
+    (src / "IMG_0001.JPG").write_bytes(b"image")
+    (src / "IMG_0001.MOV").write_bytes(b"video")
+
+    monkeypatch.setattr(
+        rename_media,
+        "imageDate",
+        lambda path, useWindows: ("2026-03-02T10-20-30", "pillow:DateTimeOriginal"),
+    )
+    monkeypatch.setattr(
+        rename_media,
+        "videoDate",
+        lambda path, useWindows: ("2026-03-02T10-20-33", "ffmpeg:creation_time"),
+    )
+
+    stats = rename_media.Stats()
+    rename_media.renameMedia(src, dest, renameArgs(live_photos=False), set(), [], stats)
+
+    assert (dest / "2026-03-02T10-20-30.JPG").exists()
+    assert (dest / "2026-03-02T10-20-33.MOV").exists()
+    assert all(not row["pair_type"] for row in stats.getCsvRows())
+
+
+def testRenameMediaResumeMovedLivePhotoVideoFromCompletedImageRow(tmp_path, monkeypatch):
+    src = tmp_path / "src"
+    dest = tmp_path / "dest"
+    src.mkdir()
+    dest.mkdir()
+    image = src / "IMG_0001.HEIC"
+    video = src / "IMG_0001.MOV"
+    video.write_bytes(b"remaining video")
+    previousImageDest = dest / "2026-03-02T10-20-30.HEIC"
+    previousImageDest.write_bytes(b"already moved image")
+    resumeRows = [
+        {
+            "source": str(image),
+            "dest": str(previousImageDest),
+            "date": "2026-03-02T10-20-30",
+            "date_offset": "",
+            "media_type": "image",
+            "action": "move",
+            "date_source": "wand:exif:DateTimeOriginal",
+            "pair_type": "live_photo",
+            "pair_id": "PAIR-1",
+            "paired_source": str(video),
+            "processed_ok": "True",
+            "error": "",
+        }
+    ]
+    monkeypatch.setattr(
+        rename_media,
+        "videoDate",
+        lambda path, useWindows: ("2026-03-02T10-20-33", "ffmpeg:creation_time"),
+    )
+
+    stats = rename_media.Stats()
+    rename_media.renameMedia(src, dest, renameArgs(copy=False), {pathKey(image)}, resumeRows, stats)
+
+    assert not video.exists()
+    assert (dest / "2026-03-02T10-20-30.MOV").exists()
+    assert stats.getCsvRows()[0]["paired_source"] == str(image)
+    assert stats.getCsvRows()[0]["pair_id"] == "PAIR-1"
+    assert stats.getCsvRows()[0]["date_source"] == "live-photo:wand:exif:DateTimeOriginal"
 
 
 def testRenameMediaResumeSkipsCompletedSource(tmp_path, monkeypatch):

@@ -30,7 +30,7 @@ Depending on the script being changed, you may also need:
 
 - `ffmpeg` / `ffprobe` for video metadata
 - ImageMagick for `Wand` image metadata support
-- `ExifTool` for writing metadata
+- `ExifTool` for writing metadata and confirming Apple Live Photo pairs
 - `pywin32` on Windows for `copy_icloud.py`
 
 `copy_icloud.py` is Windows-only because it reads Windows Shell / iCloud metadata.
