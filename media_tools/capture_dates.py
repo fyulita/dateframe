@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # capture_dates.py
 
+import datetime
 import json
 import re
 import subprocess
@@ -82,6 +83,18 @@ def parseCaptureDate(value, source):
         return None
 
     parts = match.groupdict()
+    try:
+        datetime.datetime(
+            int(parts["year"]),
+            int(parts["month"]),
+            int(parts["day"]),
+            int(parts["hour"]),
+            int(parts["minute"]),
+            int(parts["second"]),
+        )
+    except ValueError:
+        return None
+
     filenameValue = (
         f"{parts['year']}-{parts['month']}-{parts['day']}"
         f"T{parts['hour']}-{parts['minute']}-{parts['second']}"

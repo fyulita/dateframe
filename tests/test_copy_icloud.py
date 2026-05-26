@@ -154,6 +154,42 @@ def testProcessOneDoesNotUseEmbeddedDateFromDifferentMinute(tmp_path, monkeypatc
     assert stats.getCsvRows()[0]["date"] == "2026-05-25 15:36:00"
 
 
+def testProcessOneIgnoresInvalidEmbeddedVideoDateAndUsesShellDate(tmp_path, monkeypatch):
+    src = tmp_path / "src"
+    dest = tmp_path / "dest"
+    src.mkdir()
+    source = src / "VID_0001.MP4"
+    source.write_bytes(b"video")
+
+    monkeypatch.setattr(
+        copy_icloud,
+        "getShellDate",
+        lambda path, dateOrder: (datetime.datetime(2024, 3, 5, 19, 42, 0), "Media created"),
+    )
+
+    class Result:
+        returncode = 0
+        stdout = (
+            '[{"CreateDate":"0000:00:00 00:00:00",'
+            '"MediaCreateDate":"0000:00:00 00:00:00",'
+            '"TrackCreateDate":"0000:00:00 00:00:00"}]'
+        )
+        stderr = ""
+
+    monkeypatch.setattr("media_tools.capture_dates.subprocess.run", lambda *args, **kwargs: Result())
+    monkeypatch.setattr(copy_icloud, "writeEmbeddedMetadata", lambda **kwargs: (0, ""))
+
+    stats = copy_icloud.Stats()
+    copy_icloud.processOne(source, src, "folder", dest, copyOptions(), stats)
+
+    assert (dest / "2024-03-05T19-42-00.mp4").exists()
+    row = stats.getCsvRows()[0]
+    assert row["date"] == "2024-03-05 19:42:00"
+    assert row["copied_ok"] is True
+    assert row["metadata_ok"] is True
+    assert row["error"] == ""
+
+
 def testProcessOneFallsBackToEmbeddedDateWithoutShellDate(tmp_path, monkeypatch):
     src = tmp_path / "src"
     dest = tmp_path / "dest"

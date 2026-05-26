@@ -40,6 +40,25 @@ def testParseCaptureDatePreservesLocalTimeAndNormalizesOffset():
 def testParseCaptureDateSupportsUtcAndRejectsMissingDates():
     assert normalizeOffset("Z") == "+00:00"
     assert parseCaptureDate("no capture date", "invalid") is None
+    assert parseCaptureDate("0000:00:00 00:00:00", "invalid") is None
+
+
+def testCaptureDateFromEmbeddedMediaIgnoresZeroVideoDates(tmp_path, monkeypatch):
+    media = tmp_path / "VID_0001.MP4"
+    media.touch()
+
+    class Result:
+        returncode = 0
+        stdout = (
+            '[{"CreateDate":"0000:00:00 00:00:00",'
+            '"MediaCreateDate":"0000:00:00 00:00:00",'
+            '"TrackCreateDate":"0000:00:00 00:00:00"}]'
+        )
+        stderr = ""
+
+    monkeypatch.setattr("media_tools.capture_dates.subprocess.run", lambda *args, **kwargs: Result())
+
+    assert captureDateFromEmbeddedMedia(media) is None
 
 
 def testCaptureDateFromXmlUsesHigherPriorityOriginalDate(tmp_path):
