@@ -2,6 +2,8 @@
 
 Thanks for helping improve DateFrame. Contributions are welcome for bug fixes, platform compatibility, metadata handling, documentation, and carefully scoped workflow improvements.
 
+By submitting a contribution, you agree that it may be distributed under the GNU Affero General Public License v3.0 only (`AGPL-3.0-only`), the license used by DateFrame.
+
 ## Before contributing
 
 This project works with personal media collections and can copy, move, rename, or modify metadata in files. Use disposable sample files or copies of your media while testing changes.

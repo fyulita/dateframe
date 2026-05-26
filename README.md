@@ -128,4 +128,4 @@ For security-sensitive reports, see [SECURITY.md](SECURITY.md).
 
 ## License
 
-DateFrame is licensed under the GNU General Public License v3.0. See [LICENSE.md](LICENSE.md).
+DateFrame is licensed under the GNU Affero General Public License v3.0 (`AGPL-3.0-only`). It may be used commercially, but modified versions made available over a network must also offer their corresponding source code. See [LICENSE.md](LICENSE.md).
