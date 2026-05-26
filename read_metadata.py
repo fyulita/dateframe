@@ -5,7 +5,7 @@ import sys
 import os
 import datetime
 import argparse
-import concurrent.futures
+import multiprocessing
 import platform
 import xml.etree.ElementTree as ET
 import wand.image as wand
@@ -13,7 +13,7 @@ from PIL import Image, ExifTags
 import ffmpeg
 
 from media_tools.capture_dates import associatedSidecarPaths, captureDateFromAssociatedSidecars, captureDateFromXml
-from media_tools.media_common import resolvePath
+from media_tools.media_common import isImage, isVideo, positiveInt, resolvePath
 
 
 IS_WINDOWS = platform.system() == "Windows"
@@ -139,13 +139,19 @@ def useSidecars(path):
 
 
 def runTimeout(func, path, timeout=30):
-    try:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(func, path)
-            future.result(timeout=timeout)
+    process = multiprocessing.Process(target=func, args=(path,))
+    process.start()
+    process.join(timeout)
 
-    except concurrent.futures.TimeoutError:
+    timedOut = process.is_alive()
+
+    if timedOut:
+        process.terminate()
+        process.join()
         print(f"Timeout: {func.__name__} took more than {timeout} seconds.\n")
+
+    process.close()
+    return not timedOut
 
 
 def parseArgs():
@@ -158,9 +164,30 @@ def parseArgs():
     parser.add_argument("--ffmpeg", action="store_true", help="Run only the ffmpeg reader, or include it with other selected readers.")
     parser.add_argument("-w", "--windows", action="store_true", help="Run only the Windows filesystem date reader, or include it with other selected readers.")
     parser.add_argument("--sidecars", action="store_true", help="Run only associated sidecar inspection, or include it with other selected readers.")
-    parser.add_argument("--timeout", type=int, default=30, help="Method timeout in seconds (default: 30).")
+    parser.add_argument("--timeout", type=positiveInt, default=30, help="Maximum runtime per metadata reader in seconds (default: 30).")
 
     return parser.parse_args()
+
+
+def selectedReaders(args, path):
+    selected = any([args.wand, args.pillow, args.ffmpeg, args.windows, args.sidecars])
+
+    if selected:
+        return [
+            (useWand, args.wand),
+            (usePillow, args.pillow),
+            (useFFMPEG, args.ffmpeg),
+            (useWindows, args.windows),
+            (useSidecars, args.sidecars),
+        ]
+
+    return [
+        (useWand, isImage(path)),
+        (usePillow, isImage(path)),
+        (useFFMPEG, isVideo(path)),
+        (useWindows, IS_WINDOWS),
+        (useSidecars, True),
+    ]
 
 
 def main():
@@ -172,31 +199,9 @@ def main():
         print(f"Error: file doesn't exist or is not a file: {path}")
         sys.exit(1)
 
-    timeout_length = args.timeout
-    if not timeout_length:
-        timeout_length = 30
-
-    selected = any([args.wand, args.pillow, args.ffmpeg, args.windows, args.sidecars])
-    runWand = args.wand or not selected
-    runPillow = args.pillow or not selected
-    runFfmpeg = args.ffmpeg or not selected
-    runWindows = args.windows or (not selected and IS_WINDOWS)
-    runSidecars = args.sidecars or not selected
-
-    if runWand:
-        runTimeout(useWand, path, timeout=timeout_length)
-
-    if runPillow:
-        runTimeout(usePillow, path, timeout=timeout_length)
-
-    if runFfmpeg:
-        runTimeout(useFFMPEG, path, timeout=timeout_length)
-
-    if runWindows:
-        runTimeout(useWindows, path, timeout=timeout_length)
-
-    if runSidecars:
-        runTimeout(useSidecars, path, timeout=timeout_length)
+    for reader, enabled in selectedReaders(args, path):
+        if enabled:
+            runTimeout(reader, path, timeout=args.timeout)
 
 
 if __name__ == "__main__":
