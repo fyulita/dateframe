@@ -2,6 +2,7 @@ from media_tools.media_logging import (
     completedIcloudSourcesFromRows,
     isCompletedCsvRow,
     loadResumeCopiedDestinations,
+    loadResumeDetectedDates,
     pathKey,
 )
 
@@ -53,3 +54,37 @@ def testCopiedFileWithPendingMetadataCanResumeWithoutRecopying(tmp_path):
     copied = loadResumeCopiedDestinations(rows)
 
     assert copied[pathKey(source)] == str(destination)
+
+
+def testPendingCopyWithDetectedDateCanResumeWithoutReadingSourceDateAgain(tmp_path):
+    source = tmp_path / "offline-photo.jpg"
+    rows = [
+        {
+            "source": str(source),
+            "date": "2021-02-19 16:23:00",
+            "copied_ok": "False",
+            "metadata_ok": "",
+            "error": "[WinError 426] cloud operation timed out",
+        }
+    ]
+
+    detectedDates = loadResumeDetectedDates(rows)
+
+    assert detectedDates[pathKey(source)] == "2021-02-19 16:23:00"
+
+
+def testSavedDateRemainsAvailableIfDateFilterIsChanged(tmp_path):
+    source = tmp_path / "filtered-photo.jpg"
+    rows = [
+        {
+            "source": str(source),
+            "date": "2021-02-19 16:23:00",
+            "copied_ok": "",
+            "metadata_ok": "",
+            "error": "outside date range",
+        }
+    ]
+
+    detectedDates = loadResumeDetectedDates(rows)
+
+    assert detectedDates[pathKey(source)] == "2021-02-19 16:23:00"

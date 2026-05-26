@@ -35,6 +35,7 @@ from media_tools.media_common import (
 from media_tools.media_logging import (
     completedIcloudSourcesFromRows,
     loadResumeCopiedDestinations,
+    loadResumeDetectedDates,
     loadResumeSources,
     logPaths,
     pathKey,
@@ -284,6 +285,7 @@ def copyIcloudMedia(
             dest=dest,
             options=options,
             resumeCopiedPath=resumeState.copiedDestinations.get(pathKey(path)),
+            resumeDate=resumeState.detectedDates.get(pathKey(path)),
             stats=stats,
         )
 
@@ -312,6 +314,7 @@ def processOne(
     options,
     stats,
     resumeCopiedPath=None,
+    resumeDate=None,
 ):
     if not WINDOWS_SHELL_AVAILABLE:
         raise RuntimeError("copy_icloud.py requires Windows Shell support (pywin32) and only works on Windows.")
@@ -331,7 +334,18 @@ def processOne(
             stats.addCsvRow(path, None, None, "", "", "not media")
             return
 
-        shellDate, shellDateColumn = getShellDate(path, dateOrder=options.dateOrder)
+        shellDate = None
+        shellDateColumn = None
+
+        if resumeDate:
+            try:
+                shellDate = datetime.datetime.strptime(resumeDate, "%Y-%m-%d %H:%M:%S")
+                shellDateColumn = "resume CSV date"
+            except ValueError:
+                pass
+
+        if shellDate is None:
+            shellDate, shellDateColumn = getShellDate(path, dateOrder=options.dateOrder)
 
         usedEmbeddedSeconds = False
 
@@ -349,7 +363,7 @@ def processOne(
             stats.addCsvRow(path, None, shellDate, "", "", "outside date range")
             return
 
-        if shellDateColumn != "embedded metadata":
+        if shellDateColumn not in {"embedded metadata", "resume CSV date"}:
             shellDate, usedEmbeddedSeconds = dateWithEmbeddedSeconds(path, shellDate, options)
 
         if isImage(path):
@@ -361,6 +375,9 @@ def processOne(
 
         if usedEmbeddedSeconds:
             metadata = metadataWithRefinedDate(metadata, shellDateColumn, shellDate)
+        elif shellDateColumn == "resume CSV date":
+            metadata = dict(metadata)
+            metadata["Date taken"] = datetimeToExiftool(shellDate)
 
         if options.keepStructure and srcMode == "folder":
             relDir = relDirFor(str(path), str(src))
@@ -681,9 +698,11 @@ def main():
     stats = Stats()
     stats.setPreviousCsvRows(resumeRows)
     resumeCopiedDestinations = loadResumeCopiedDestinations(resumeRows)
+    resumeDetectedDates = loadResumeDetectedDates(resumeRows)
     resumeState = ResumeState(
         completedSources=resumeCompletedSources,
         copiedDestinations=resumeCopiedDestinations,
+        detectedDates=resumeDetectedDates,
     )
     checkpointStopEvent = threading.Event()
     checkpointThread = None
