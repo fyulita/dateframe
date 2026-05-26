@@ -53,5 +53,3 @@ include = ["media_tools*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-cache_dir = ".pytest-cache"
-addopts = "--basetemp=.pytest-temp"
