@@ -2,7 +2,6 @@
 # copy_icloud.py
 
 import sys
-import time
 import datetime
 import shutil
 import threading
@@ -204,7 +203,8 @@ def copyWithRetry(src, dest, stats, retries=5, delay=3.0):
                 print(f"  waiting: {sleepSeconds:.1f}s")
                 print()
 
-            time.sleep(sleepSeconds)
+            if stopEvent.wait(sleepSeconds):
+                raise KeyboardInterrupt()
 
     raise lastError
 

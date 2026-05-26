@@ -77,6 +77,33 @@ def testProcessOneCopiesMediaAndWritesMetadata(tmp_path, monkeypatch):
     assert row["error"] == ""
 
 
+def testCopyWithRetryStopsBeforeWaitingForNextAttemptWhenInterrupted(tmp_path, monkeypatch):
+    source = tmp_path / "source.jpg"
+    copied = tmp_path / "copied.jpg"
+    source.write_bytes(b"image")
+    attempts = []
+    waits = []
+    cloudTimeout = OSError("iCloud hydration timeout")
+    cloudTimeout.winerror = 426
+
+    def timeoutCopy(src, dest):
+        attempts.append((src, dest))
+        raise cloudTimeout
+
+    def interruptedWait(seconds):
+        waits.append(seconds)
+        return True
+
+    monkeypatch.setattr(copy_icloud.shutil, "copy2", timeoutCopy)
+    monkeypatch.setattr(copy_icloud.stopEvent, "wait", interruptedWait)
+
+    with pytest.raises(KeyboardInterrupt):
+        copy_icloud.copyWithRetry(source, copied, copy_icloud.Stats(), retries=5, delay=30)
+
+    assert attempts == [(source, copied)]
+    assert waits == [30]
+
+
 def testProcessOnePreservesEmbeddedSecondsMatchingShellMinute(tmp_path, monkeypatch):
     src = tmp_path / "src"
     dest = tmp_path / "dest"

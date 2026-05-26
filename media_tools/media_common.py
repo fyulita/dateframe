@@ -300,8 +300,12 @@ def runParallel(paths, workerFn, maxWorkers=None, stopEvent=None, onError=None):
 
             done, _pending = concurrent.futures.wait(
                 futures,
+                timeout=0.2,
                 return_when=concurrent.futures.FIRST_COMPLETED,
             )
+
+            if not done:
+                continue
 
             try:
                 for fut in done:
