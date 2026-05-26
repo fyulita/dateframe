@@ -170,6 +170,21 @@ def loadResumeCopiedDestinations(rows):
     return copied
 
 
+def loadResumeDetectedDates(rows):
+    detectedDates = {}
+
+    for row in rows:
+        source = (row.get("source") or "").strip()
+        dateValue = (row.get("date") or "").strip()
+
+        if not source or not dateValue:
+            continue
+
+        detectedDates[pathKey(source)] = dateValue
+
+    return detectedDates
+
+
 def loadResumeRows(csvPath, csvFields, runContextFields, sourceField="source", isCompletedFn=None):
     seen = set()
     context = {}

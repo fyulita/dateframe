@@ -3,7 +3,7 @@
 
 import argparse
 import datetime
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 from media_tools.media_common import effectiveCommandPrefix, positiveInt, resolvePath
@@ -34,6 +34,7 @@ class CopyOptions:
 class ResumeState:
     completedSources: set
     copiedDestinations: dict
+    detectedDates: dict = field(default_factory=dict)
 
 
 def buildEffectiveCommand(args, src, dest):

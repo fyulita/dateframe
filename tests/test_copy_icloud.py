@@ -314,6 +314,44 @@ def testMetadataRetryUsesExistingCopyWithoutCopyingAgain(tmp_path, monkeypatch):
     assert row["metadata_ok"] is True
 
 
+def testPendingCopyUsesDateSavedBeforeIcloudFileWasDownloaded(tmp_path, monkeypatch):
+    src = tmp_path / "src"
+    dest = tmp_path / "dest"
+    src.mkdir()
+    source = src / "OFFLINE.JPG"
+    source.write_bytes(b"downloaded image")
+    written = []
+
+    monkeypatch.setattr(
+        copy_icloud,
+        "getShellDate",
+        lambda path, dateOrder: pytest.fail("resume must not replace the saved iCloud date"),
+    )
+    monkeypatch.setattr(copy_icloud, "getAllShellMetadata", lambda path: {})
+
+    def fakeWriteEmbeddedMetadata(**kwargs):
+        written.append(kwargs["metadata"])
+        return 0, ""
+
+    monkeypatch.setattr(copy_icloud, "writeEmbeddedMetadata", fakeWriteEmbeddedMetadata)
+
+    stats = copy_icloud.Stats()
+    copy_icloud.processOne(
+        source,
+        src,
+        "folder",
+        dest,
+        copyOptions(),
+        stats,
+        resumeDate="2021-02-19 16:23:00",
+    )
+
+    copied = dest / "2021-02-19T16-23-00.jpg"
+    assert copied.exists()
+    assert written == [{"Date taken": "2021:02:19 16:23:00"}]
+    assert stats.getCsvRows()[0]["date"] == "2021-02-19 16:23:00"
+
+
 def testCopyIcloudMediaSkipsCompletedResumeSources(tmp_path, monkeypatch):
     src = tmp_path / "src"
     dest = tmp_path / "dest"
