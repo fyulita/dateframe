@@ -231,6 +231,21 @@ def dateWithEmbeddedSeconds(path, shellDate, options):
     return candidate, candidate != shellDate
 
 
+def dateWithFilesystemSeconds(path, shellDate):
+    if shellDate.second != 0:
+        return shellDate, False
+
+    try:
+        candidate = datetime.datetime.fromtimestamp(path.stat().st_mtime).replace(microsecond=0)
+    except OSError:
+        return shellDate, False
+
+    if candidate.replace(second=0, microsecond=0) != shellDate.replace(second=0, microsecond=0):
+        return shellDate, False
+
+    return candidate, candidate != shellDate
+
+
 def embeddedCaptureDate(path, options):
     embeddedDate = captureDateFromEmbeddedMedia(
         path,
@@ -244,14 +259,25 @@ def embeddedCaptureDate(path, options):
     return datetime.datetime.strptime(embeddedDate.displayValue, "%Y-%m-%d %H:%M:%S")
 
 
-def metadataWithRefinedDate(metadata, shellDateColumn, dateValue):
-    if shellDateColumn not in metadata:
-        return metadata
-
+def metadataWithSelectedDate(metadata, path, dateValue):
     adjusted = dict(metadata)
-    adjusted[shellDateColumn] = datetimeToExiftool(dateValue)
+
+    if isImage(path):
+        adjusted["Date taken"] = datetimeToExiftool(dateValue)
+    elif isVideo(path):
+        adjusted["Media created"] = datetimeToExiftool(dateValue)
 
     return adjusted
+
+
+def dateDetail(shellDateColumn, usedEmbeddedSeconds, usedFilesystemSeconds):
+    if usedEmbeddedSeconds:
+        return f"{shellDateColumn} + embedded seconds"
+
+    if usedFilesystemSeconds:
+        return f"{shellDateColumn} + filesystem seconds"
+
+    return shellDateColumn
 
 
 # ----------------------
@@ -348,6 +374,7 @@ def processOne(
             shellDate, shellDateColumn = getShellDate(path, dateOrder=options.dateOrder)
 
         usedEmbeddedSeconds = False
+        usedFilesystemSeconds = False
 
         if shellDate is None:
             shellDate = embeddedCaptureDate(path, options)
@@ -363,8 +390,11 @@ def processOne(
             stats.addCsvRow(path, None, shellDate, "", "", "outside date range")
             return
 
-        if shellDateColumn not in {"embedded metadata", "resume CSV date"}:
+        if shellDateColumn != "embedded metadata":
             shellDate, usedEmbeddedSeconds = dateWithEmbeddedSeconds(path, shellDate, options)
+
+            if not usedEmbeddedSeconds:
+                shellDate, usedFilesystemSeconds = dateWithFilesystemSeconds(path, shellDate)
 
         if isImage(path):
             stats.inc("processed_images")
@@ -372,12 +402,7 @@ def processOne(
             stats.inc("processed_videos")
 
         metadata = getAllShellMetadata(path)
-
-        if usedEmbeddedSeconds:
-            metadata = metadataWithRefinedDate(metadata, shellDateColumn, shellDate)
-        elif shellDateColumn == "resume CSV date":
-            metadata = dict(metadata)
-            metadata["Date taken"] = datetimeToExiftool(shellDate)
+        metadata = metadataWithSelectedDate(metadata, path, shellDate)
 
         if options.keepStructure and srcMode == "folder":
             relDir = relDirFor(str(path), str(src))
@@ -397,8 +422,8 @@ def processOne(
             if not options.quiet:
                 with printLock:
                     print("[METADATA RETRY]")
-                    dateDetail = f"{shellDateColumn} + embedded seconds" if usedEmbeddedSeconds else shellDateColumn
-                    print(f"  DATE: {shellDate} ({dateDetail})")
+                    detail = dateDetail(shellDateColumn, usedEmbeddedSeconds, usedFilesystemSeconds)
+                    print(f"  DATE: {shellDate} ({detail})")
                     print(f"  FROM: {path}")
                     print(f"  TO:   {outPath}")
                     print()
@@ -433,9 +458,9 @@ def processOne(
 
             if not options.quiet:
                 with printLock:
-                    dateDetail = f"{shellDateColumn} + embedded seconds" if usedEmbeddedSeconds else shellDateColumn
+                    detail = dateDetail(shellDateColumn, usedEmbeddedSeconds, usedFilesystemSeconds)
                     print("[COPY]")
-                    print(f"  DATE: {shellDate} ({dateDetail})")
+                    print(f"  DATE: {shellDate} ({detail})")
                     print(f"  FROM: {path}")
                     print(f"  TO:   {outPath}")
                     print()

@@ -1,4 +1,5 @@
 import datetime
+import os
 import threading
 
 import pytest
@@ -181,6 +182,68 @@ def testProcessOneDoesNotUseEmbeddedDateFromDifferentMinute(tmp_path, monkeypatc
     assert stats.getCsvRows()[0]["date"] == "2026-05-25 15:36:00"
 
 
+def testProcessOneRefinesShellDateWithMatchingFilesystemSeconds(tmp_path, monkeypatch):
+    src = tmp_path / "src"
+    dest = tmp_path / "dest"
+    src.mkdir()
+    source = src / "ICLOUD.JPG"
+    source.write_bytes(b"image without exif date")
+    timestamp = datetime.datetime(2024, 2, 10, 5, 22, 59).timestamp()
+    os.utime(source, (timestamp, timestamp))
+    written = []
+
+    monkeypatch.setattr(
+        copy_icloud,
+        "getShellDate",
+        lambda path, dateOrder: (datetime.datetime(2024, 2, 10, 5, 22, 0), "Date taken"),
+    )
+    monkeypatch.setattr(copy_icloud, "getAllShellMetadata", lambda path: {})
+    monkeypatch.setattr(copy_icloud, "captureDateFromEmbeddedMedia", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        copy_icloud,
+        "writeEmbeddedMetadata",
+        lambda **kwargs: (written.append(kwargs["metadata"]) or (0, "")),
+    )
+
+    stats = copy_icloud.Stats()
+    copy_icloud.processOne(source, src, "folder", dest, copyOptions(), stats)
+
+    assert (dest / "2024-02-10T05-22-59.jpg").exists()
+    assert written == [{"Date taken": "2024:02:10 05:22:59"}]
+    assert stats.getCsvRows()[0]["date"] == "2024-02-10 05:22:59"
+
+
+def testProcessOneDoesNotUseFilesystemSecondsFromDifferentMinute(tmp_path, monkeypatch):
+    src = tmp_path / "src"
+    dest = tmp_path / "dest"
+    src.mkdir()
+    source = src / "ICLOUD.JPG"
+    source.write_bytes(b"image without exif date")
+    timestamp = datetime.datetime(2024, 2, 10, 5, 23, 59).timestamp()
+    os.utime(source, (timestamp, timestamp))
+    written = []
+
+    monkeypatch.setattr(
+        copy_icloud,
+        "getShellDate",
+        lambda path, dateOrder: (datetime.datetime(2024, 2, 10, 5, 22, 0), "Date taken"),
+    )
+    monkeypatch.setattr(copy_icloud, "getAllShellMetadata", lambda path: {})
+    monkeypatch.setattr(copy_icloud, "captureDateFromEmbeddedMedia", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        copy_icloud,
+        "writeEmbeddedMetadata",
+        lambda **kwargs: (written.append(kwargs["metadata"]) or (0, "")),
+    )
+
+    stats = copy_icloud.Stats()
+    copy_icloud.processOne(source, src, "folder", dest, copyOptions(), stats)
+
+    assert (dest / "2024-02-10T05-22-00.jpg").exists()
+    assert written == [{"Date taken": "2024:02:10 05:22:00"}]
+    assert stats.getCsvRows()[0]["date"] == "2024-02-10 05:22:00"
+
+
 def testProcessOneIgnoresInvalidEmbeddedVideoDateAndUsesShellDate(tmp_path, monkeypatch):
     src = tmp_path / "src"
     dest = tmp_path / "dest"
@@ -204,7 +267,12 @@ def testProcessOneIgnoresInvalidEmbeddedVideoDateAndUsesShellDate(tmp_path, monk
         stderr = ""
 
     monkeypatch.setattr("media_tools.capture_dates.subprocess.run", lambda *args, **kwargs: Result())
-    monkeypatch.setattr(copy_icloud, "writeEmbeddedMetadata", lambda **kwargs: (0, ""))
+    written = []
+    monkeypatch.setattr(
+        copy_icloud,
+        "writeEmbeddedMetadata",
+        lambda **kwargs: (written.append(kwargs["metadata"]) or (0, "")),
+    )
 
     stats = copy_icloud.Stats()
     copy_icloud.processOne(source, src, "folder", dest, copyOptions(), stats)
@@ -215,6 +283,7 @@ def testProcessOneIgnoresInvalidEmbeddedVideoDateAndUsesShellDate(tmp_path, monk
     assert row["copied_ok"] is True
     assert row["metadata_ok"] is True
     assert row["error"] == ""
+    assert written[0]["Media created"] == "2024:03:05 19:42:00"
 
 
 def testProcessOneFallsBackToEmbeddedDateWithoutShellDate(tmp_path, monkeypatch):
