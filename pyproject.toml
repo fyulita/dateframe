@@ -8,7 +8,7 @@ version = "0.1.1"
 description = "Organize photos and videos by capture date while preserving metadata and resumable workflows."
 readme = "README.md"
 requires-python = ">=3.10"
-license = "GPL-3.0-only"
+license = "AGPL-3.0-only"
 license-files = ["LICENSE.md"]
 keywords = ["photos", "videos", "metadata", "exif", "icloud", "live-photos"]
 classifiers = [
