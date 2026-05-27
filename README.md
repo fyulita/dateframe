@@ -79,17 +79,17 @@ IMG_1234.MOV -> 2026-03-02T03-20-52.MOV
 The processing commands (`import-icloud`, `rename`, and `write-dates`) write logs to `./logs` by default:
 
 - A CSV log records per-file results and is the source used to resume.
-- A TXT log records run times, the effective command, interruption state, and summary counts.
+- A TXT log records run times, the effective `dateframe <command>` invocation, interruption state, and summary counts.
 - A periodic checkpoint CSV preserves recent progress if a run is interrupted suddenly.
 
 Resume an interrupted run from its most recent CSV or checkpoint:
 
 ```bash
-dateframe rename --resume-csv "./logs/rename_media_2026-05-22T13-37-05.csv"
-dateframe import-icloud --resume-csv "./logs/copy_icloud_2026-05-21T22-54-12_checkpoint.csv"
+dateframe rename --resume-csv "./logs/dateframe_rename_2026-05-22T13-37-05.csv"
+dateframe import-icloud --resume-csv "./logs/dateframe_import-icloud_2026-05-21T22-54-12_checkpoint.csv"
 ```
 
-The latest resumed CSV includes previously recorded history, so it becomes the next file to use when continuing.
+The latest resumed CSV includes previously recorded history, so it becomes the next file to use when continuing. Logs created by earlier versions with legacy script-based names remain valid resume inputs.
 
 ## iCloud Notes
 

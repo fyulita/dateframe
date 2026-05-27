@@ -146,6 +146,9 @@ def testMainWritesFinalLogsAndResumesFromNewestCsv(tmp_path, monkeypatch):
     write_dates.main()
 
     firstCsv = next(logDir.glob("*.csv"))
+    assert firstCsv.name.startswith("dateframe_write-dates_")
+    firstTxt = next(logDir.glob("*.txt"))
+    assert "effective_command: dateframe write-dates" in firstTxt.read_text(encoding="utf-8")
     with open(firstCsv, newline="", encoding="utf-8-sig") as f:
         firstRows = list(csv.DictReader(f))
 

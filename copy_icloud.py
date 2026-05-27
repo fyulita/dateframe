@@ -61,6 +61,7 @@ printLock = threading.Lock()
 copySemaphore = None
 stopEvent = threading.Event()
 reservedPaths = set()
+LOG_PREFIX = "dateframe_import-icloud"
 
 
 # ----------------------
@@ -698,7 +699,7 @@ def main():
         sys.exit(9)
 
     logDir = resolvePath(args.log_path)
-    txtLogName, csvLogName, checkpointPath = logPaths("copy_icloud", logDir, runStartedAt)
+    txtLogName, csvLogName, checkpointPath = logPaths(LOG_PREFIX, logDir, runStartedAt)
     runContext = buildRunContext(args, src, dest)
     copySemaphore = threading.Semaphore(args.copy_workers)
     fromDate, toDate = parseOptionalDateRange(args.from_date, args.to_date)
@@ -760,7 +761,7 @@ def main():
         runEndedAt = datetime.datetime.now()
         saveRunLog(
             stats,
-            logPrefix="copy_icloud",
+            logPrefix=LOG_PREFIX,
             logDir=logDir,
             runContext=runContext,
             runStartedAt=runStartedAt,

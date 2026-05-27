@@ -434,6 +434,9 @@ def testMainWritesLogsAndResumesFromGeneratedCsv(tmp_path, monkeypatch):
     rename_media.main()
 
     firstCsv = next(logDir.glob("*.csv"))
+    assert firstCsv.name.startswith("dateframe_rename_")
+    firstTxt = next(logDir.glob("*.txt"))
+    assert "effective_command: dateframe rename" in firstTxt.read_text(encoding="utf-8")
     with open(firstCsv, newline="", encoding="utf-8-sig") as f:
         firstRows = list(csv.DictReader(f))
 

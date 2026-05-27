@@ -122,6 +122,7 @@ printLock = threading.Lock()
 stopEvent = threading.Event()
 WAND_SEM = threading.Semaphore(int(os.environ.get("WAND_MAX_CONCURRENT", "5")))
 DEFAULT_WORKERS = 4
+LOG_PREFIX = "dateframe_rename"
 
 
 # ----------------------
@@ -347,7 +348,7 @@ def parseArgs():
     parser.add_argument("-m", "--move", action="store_true", help="Move files instead of copying.")
 
     parser.add_argument("--input-txt", action="store_true", help="Treat src as a .txt file containing one source path per line.")
-    parser.add_argument("--resume-csv", help="Resume from a previous rename_media CSV log. If src/dest are omitted, use saved run context.")
+    parser.add_argument("--resume-csv", help="Resume from a previous DateFrame rename CSV log. If src/dest are omitted, use saved run context.")
 
     parser.add_argument("-r", "--recursive", action="store_true", default=None, help="Process recursively when src is a folder.")
     parser.add_argument("--no-recursive", dest="recursive", action="store_false", help="Disable recursive processing when resuming.")
@@ -1275,7 +1276,7 @@ def main():
         sys.exit(8)
 
     logDir = resolvePath(args.log_path)
-    txtLogName, csvLogName, checkpointPath = logPaths("rename_media", logDir, runStartedAt)
+    txtLogName, csvLogName, checkpointPath = logPaths(LOG_PREFIX, logDir, runStartedAt)
     runContext = buildRunContext(args, src, dest)
     stats = Stats()
     stats.setPreviousCsvRows(resumeRows)
@@ -1309,7 +1310,7 @@ def main():
         runEndedAt = datetime.datetime.now()
         saveRunLog(
             stats,
-            logPrefix="rename_media",
+            logPrefix=LOG_PREFIX,
             logDir=logDir,
             runContext=runContext,
             runStartedAt=runStartedAt,

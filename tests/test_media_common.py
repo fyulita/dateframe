@@ -40,8 +40,8 @@ def testTxtInputIgnoresCommentsAndInvalidPaths(tmp_path):
     assert iterFiles(inputTxt, recursive=False, inputTxt=True) == [first.resolve(), second.resolve()]
 
 
-def testEffectiveCommandPrefixUsesPublicCliOnlyWhenDispatched(monkeypatch):
-    assert effectiveCommandPrefix("rename_media.py", "rename") == ["python", "rename_media.py"]
+def testEffectiveCommandPrefixAlwaysUsesPublicCli(monkeypatch):
+    assert effectiveCommandPrefix("rename_media.py", "rename") == ["dateframe", "rename"]
 
     monkeypatch.setenv("DATEFRAME_SUBCOMMAND", "rename")
 
