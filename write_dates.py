@@ -72,6 +72,7 @@ DEFAULT_WORKERS = 2
 
 printLock = threading.Lock()
 stopEvent = threading.Event()
+LOG_PREFIX = "dateframe_write-dates"
 
 
 # ----------------------
@@ -249,7 +250,7 @@ def parseArgs():
     parser.add_argument("src", nargs="?", help="Source folder/file, or .txt file if --input-txt is used.")
 
     parser.add_argument("--input-txt", action="store_true", help="Treat src as a .txt file containing one media path per line.")
-    parser.add_argument("--resume-csv", help="Resume from a previous write_dates CSV log. If src is omitted, use the saved run context.")
+    parser.add_argument("--resume-csv", help="Resume from a previous DateFrame write-dates CSV log. If src is omitted, use the saved run context.")
 
     parser.add_argument("-r", "--recursive", action="store_true", default=None, help="Process recursively when src is a folder.")
     parser.add_argument("--no-recursive", dest="recursive", action="store_false", help="Disable recursive processing when resuming.")
@@ -563,7 +564,7 @@ def main():
         sys.exit(2)
 
     logDir = resolvePath(args.log_path)
-    txtLogName, csvLogName, checkpointPath = logPaths("write_dates", logDir, runStartedAt)
+    txtLogName, csvLogName, checkpointPath = logPaths(LOG_PREFIX, logDir, runStartedAt)
     runContext = buildRunContext(args, src)
     stats = Stats()
     stats.setPreviousCsvRows(resumeRows)
@@ -596,7 +597,7 @@ def main():
         runEndedAt = datetime.datetime.now()
         saveRunLog(
             stats,
-            logPrefix="write_dates",
+            logPrefix=LOG_PREFIX,
             logDir=logDir,
             runContext=runContext,
             runStartedAt=runStartedAt,

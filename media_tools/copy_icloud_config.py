@@ -165,7 +165,7 @@ def parseArgs():
     parser.add_argument("dest", nargs="?", help="Destination folder.")
 
     parser.add_argument("--input-txt", action="store_true", help="Treat src as a .txt file containing one media path per line.")
-    parser.add_argument("--resume-csv", help="Resume from a previous copy_icloud CSV log. If src/dest are omitted, use the saved run context.")
+    parser.add_argument("--resume-csv", help="Resume from a previous DateFrame import-icloud CSV log. If src/dest are omitted, use the saved run context.")
     parser.add_argument("--from-date", help="Start date inclusive. Format: YYYY-MM-DD.")
     parser.add_argument("--to-date", help="End date inclusive. Format: YYYY-MM-DD.")
     parser.add_argument("--clear-date-filter", action="store_true", help="Clear date filters saved in the resume CSV.")
