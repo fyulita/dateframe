@@ -78,7 +78,7 @@ IMG_1234.MOV -> 2026-03-02T03-20-52.MOV
 
 The processing commands (`import-icloud`, `rename`, and `write-dates`) write logs to `./logs` by default:
 
-- A CSV log records per-file results and is the source used to resume.
+- A CSV log records per-file results, including the selected date source, and is the source used to resume.
 - A TXT log records run times, the effective `dateframe <command>` invocation, interruption state, and summary counts.
 - A periodic checkpoint CSV preserves recent progress if a run is interrupted suddenly.
 
@@ -96,7 +96,7 @@ The latest resumed CSV includes previously recorded history, so it becomes the n
 There are important differences between iCloud export paths:
 
 - `dateframe import-icloud` operates on the iCloud Photos folder exposed by the Windows application. It can preserve useful iCloud/Windows date information, but Live Photo video components are not available there when iCloud exposes only the image file.
-- For `dateframe import-icloud`, leave iCloud placeholder files undownloaded when possible: Windows may expose useful iCloud capture dates before a file is downloaded, then replace them after hydration. DateFrame refines minute-only iCloud dates with matching embedded or file timestamp seconds when available. If a cloud download fails after its date was detected, resume from the generated CSV so DateFrame can reuse the preserved date.
+- For `dateframe import-icloud`, leave iCloud placeholder files undownloaded when possible: Windows may expose useful iCloud capture dates before a file is downloaded, then replace them after hydration. DateFrame refines minute-only iCloud dates with matching embedded, file creation, or file modification seconds when available; filesystem seconds are used only when their local date and minute match the detected iCloud date. If a cloud download fails after its date was detected, resume from the generated CSV so DateFrame can reuse the preserved date.
 - Downloads from iCloud Web may provide Live Photos as image and video pairs, which `dateframe rename` can identify and keep together. Some exported files may not contain reliable capture-date metadata.
 
 Extended workflow guidance and findings about iCloud exports, Live Photos, metadata sources, and recovery strategies are good candidates for the project wiki.
