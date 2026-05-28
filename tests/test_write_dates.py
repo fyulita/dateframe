@@ -24,6 +24,7 @@ def writeArgs(**overrides):
         "exiftool": "exiftool",
         "timeout": 90,
         "workers": 1,
+        "verify": False,
         "quiet": True,
     }
     args.update(overrides)
@@ -88,6 +89,62 @@ def testWriteDatesDryRunRecordsActionWithoutCompletingMetadata(tmp_path):
     assert row["metadata_ok"] == ""
     assert row["write_target"] == "dry-run"
     assert stats.summary()["dry_run"] == 1
+
+
+def testWriteDatesVerifyReadsBackWrittenMetadata(tmp_path, monkeypatch):
+    image = tmp_path / "2026-03-02T10-20-30.JPG"
+    image.write_bytes(b"fake image")
+    verified = {}
+
+    def fakeExiftool(**kwargs):
+        return 0, ""
+
+    def fakeVerify(path, expectedDate, exiftoolPath, timeout, printLock):
+        verified.update(
+            {
+                "path": path,
+                "expectedDate": expectedDate,
+                "exiftoolPath": exiftoolPath,
+                "timeout": timeout,
+            }
+        )
+        return True, ""
+
+    monkeypatch.setattr(write_dates, "runExiftool", fakeExiftool)
+    monkeypatch.setattr(write_dates, "verifyWrittenDate", fakeVerify)
+
+    stats = write_dates.Stats()
+    write_dates.processOne(image, writeArgs(verify=True), stats)
+
+    row = stats.getCsvRows()[0]
+    assert verified["path"] == image
+    assert verified["expectedDate"] == "2026:03:02 10:20:30"
+    assert row["metadata_ok"] is True
+    assert row["error"] == ""
+    assert stats.summary()["metadata_verified"] == 1
+
+
+def testWriteDatesVerifyFailureKeepsRowPending(tmp_path, monkeypatch):
+    image = tmp_path / "2026-03-02T10-20-30.JPG"
+    image.write_bytes(b"fake image")
+
+    def fakeExiftool(**kwargs):
+        return 0, ""
+
+    def fakeVerify(path, expectedDate, exiftoolPath, timeout, printLock):
+        return False, "expected date not found after write"
+
+    monkeypatch.setattr(write_dates, "runExiftool", fakeExiftool)
+    monkeypatch.setattr(write_dates, "verifyWrittenDate", fakeVerify)
+
+    stats = write_dates.Stats()
+    write_dates.processOne(image, writeArgs(verify=True), stats)
+
+    row = stats.getCsvRows()[0]
+    assert row["metadata_ok"] is False
+    assert row["error"] == "expected date not found after write"
+    assert not write_dates.isCompletedCsvRow(row)
+    assert stats.summary()["metadata_verify_failed"] == 1
 
 
 def testWriteDatesResumeSkipsCompletedSource(tmp_path, monkeypatch):

@@ -523,6 +523,11 @@ Without `--if-missing`, matching date tags may be overwritten.
 `--set-filetime` additionally updates filesystem create and modification
 timestamps to the selected date.
 
+`--verify` reads the expected date tags back after ExifTool writes them. It is
+off by default because it adds another ExifTool read per file. If verification
+does not find the expected date, the CSV row is left with `metadata_ok=False`
+so a later `--resume-csv` run retries that file.
+
 ### CSV Fields
 
 The `write-dates` CSV records:
@@ -544,6 +549,7 @@ sidecar, or only evaluated under dry-run.
 | `--dry-run` | Do not change files |
 | `--if-missing` | Only fill tags that are empty |
 | `--set-filetime` | Also set filesystem timestamps |
+| `--verify` | Read date tags back after writing and retry failed verification on resume |
 | `--exiftool PATH` | Select ExifTool binary |
 | `--timeout N` | Limit ExifTool time per media file |
 | `--checkpoint-seconds N` | Periodically write a resume checkpoint |
