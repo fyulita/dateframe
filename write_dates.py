@@ -31,6 +31,7 @@ from media_tools.media_logging import (
     saveRunLog,
     truthyCsvValue,
 )
+from media_tools.metadata_writer import verifyWrittenDate
 
 
 # ----------------------
@@ -50,6 +51,7 @@ RUN_CONTEXT_FIELDS = [
     "run_exiftool",
     "run_timeout",
     "run_workers",
+    "run_verify",
     "run_quiet",
     "run_interrupted",
 ]
@@ -57,6 +59,8 @@ RUN_CONTEXT_FIELDS = [
 SUMMARY_COUNT_KEYS = [
     "written",
     "written_sidecars",
+    "metadata_verified",
+    "metadata_verify_failed",
     "dry_run",
     "skipped_resume_completed",
     "skipped_sidecar",
@@ -171,6 +175,7 @@ def buildRunContext(args, src):
         "run_exiftool": args.exiftool,
         "run_timeout": args.timeout,
         "run_workers": args.workers,
+        "run_verify": args.verify,
         "run_quiet": args.quiet,
         "run_interrupted": False,
         "run_effective_command": buildEffectiveCommand(args, src),
@@ -198,6 +203,9 @@ def buildEffectiveCommand(args, src):
     if args.set_filetime:
         parts.append("--set-filetime")
 
+    if args.verify:
+        parts.append("--verify")
+
     if args.quiet:
         parts.append("--quiet")
 
@@ -223,6 +231,9 @@ def applyRunDefaults(args, resumeContext, inheritInputMode):
 
     if args.set_filetime is None:
         args.set_filetime = metadataBool(resumeContext.get("run_set_filetime"), False)
+
+    if args.verify is None:
+        args.verify = metadataBool(resumeContext.get("run_verify"), False)
 
     if args.dry_run is None:
         args.dry_run = metadataBool(resumeContext.get("run_dry_run"), False)
@@ -262,6 +273,8 @@ def parseArgs():
     parser.add_argument("--overwrite-tags", dest="if_missing", action="store_false", help="Overwrite date tags when resuming.")
     parser.add_argument("--set-filetime", dest="set_filetime", action="store_true", default=None, help="Also set filesystem dates (FileModifyDate/CreateDate).")
     parser.add_argument("--no-set-filetime", dest="set_filetime", action="store_false", help="Do not set filesystem dates when resuming.")
+    parser.add_argument("--verify", dest="verify", action="store_true", default=None, help="Read metadata back after writing and keep the row pending if the expected date is not found.")
+    parser.add_argument("--no-verify", dest="verify", action="store_false", help="Disable metadata verification when resuming.")
     parser.add_argument("--exiftool", default=None, help="Path to exiftool binary. Default: exiftool in PATH.")
     parser.add_argument("--timeout", type=positiveInt, default=None, help=f"Per-file ExifTool timeout in seconds. Default: {DEFAULT_TIMEOUT}.")
     parser.add_argument("--workers", type=int, default=None, help=f"Max threads. 0 = auto. Default: {DEFAULT_WORKERS}.")
@@ -432,6 +445,20 @@ def processOne(path, args, stats):
         else:
             stats.inc("written")
             metadataOk = True
+
+        if args.verify and not args.dry_run:
+            verified, verifyError = verifyWrittenDate(path, dt, args.exiftool, args.timeout, printLock)
+
+            if verified:
+                stats.inc("metadata_verified")
+            else:
+                stats.inc("metadata_verify_failed")
+                stats.addFailed(str(path))
+                stats.addCsvRow(path, displayDate, dateOffset, dateSource, False, writeTarget, verifyError)
+                if not args.quiet:
+                    with printLock:
+                        print(f"[verify failed:{writeTarget}] {path} <- {dt}: {verifyError}")
+                return
 
         stats.addCsvRow(path, displayDate, dateOffset, dateSource, metadataOk, writeTarget, "")
         if not args.quiet:
