@@ -340,7 +340,6 @@ Wand:   dng:create.date
 Pillow: DateTimeOriginal
 Pillow: DateTime
 Pillow: DateTimeDigitized
-Wand:   date:modify
 ```
 
 If `--windows` is enabled and no earlier source succeeds, filesystem
@@ -429,12 +428,13 @@ Photo pairing fields, success state, and errors.
 | `--checkpoint-seconds N` | Periodically write a resume checkpoint |
 | `--log-path PATH` | Choose log directory |
 
-### Known Timestamp Caveat
+### Filesystem Timestamp Caveat
 
-Some Wand values such as `date:create` or `date:modify` can represent
-filesystem timestamps with a UTC offset rather than a true local capture date.
-The fallback handling for timezone-aware Wand values should be audited before
-depending on it for files that do not contain a stronger capture-date source.
+DateFrame does not use Wand filesystem timestamps such as `date:create` or
+`date:modify` as capture-date fallbacks for `rename`. Those values can be
+timezone-aware filesystem dates rather than true capture metadata. If you want
+to fall back to the local filesystem modification time for files without
+stronger metadata, use `--windows` explicitly.
 
 ## `dateframe write-dates`
 

@@ -17,6 +17,7 @@ from media_tools.copy_icloud_config import (
 from media_tools.capture_dates import captureDateFromEmbeddedMedia
 from media_tools.media_common import (
     BaseStats,
+    detectedImageExtension,
     datetimeToExiftool,
     datetimeToFilename,
     inDateRange,
@@ -306,22 +307,6 @@ def correctedPendingOutputPath(path, filename, ext):
         raise
 
     return correctedPath
-
-
-def detectedImageExtension(path):
-    try:
-        with open(path, "rb") as f:
-            header = f.read(12)
-    except OSError:
-        return ""
-
-    if header.startswith(b"\xff\xd8\xff"):
-        return ".jpg"
-
-    if header.startswith(b"\x89PNG\r\n\x1a\n"):
-        return ".png"
-
-    return ""
 
 
 def correctedOutputExtension(path):

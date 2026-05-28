@@ -21,6 +21,9 @@ from wand.exceptions import CorruptImageWarning
 from media_tools.capture_dates import captureDateFromAssociatedSidecars
 from media_tools.media_common import (
     BaseStats,
+    correctedMediaExtension,
+    dateValueToDisplay,
+    dateValueToFilename,
     effectiveCommandPrefix,
     isImage,
     isSubpath,
@@ -166,7 +169,7 @@ class Stats(BaseStats):
         row = {
             "source": source,
             "dest": "" if dest is None else str(dest),
-            "date": "" if dateValue is None else str(dateValue),
+            "date": "" if dateValue is None else dateValueToDisplay(str(dateValue)),
             "date_offset": "" if dateOffset is None else str(dateOffset),
             "media_type": mediaType,
             "action": action,
@@ -227,6 +230,24 @@ def rowsBySource(rows):
         for row in rows
         if row.get("source")
     }
+
+
+def pendingDestinationsFromRows(rows):
+    pending = {}
+
+    for row in rows:
+        source = (row.get("source") or "").strip()
+        dest = (row.get("dest") or "").strip()
+
+        if not source or not dest:
+            continue
+
+        if isCompletedCsvRow(row):
+            continue
+
+        pending[pathKey(source)] = dest
+
+    return pending
 
 
 def inferResumeAction(rows):
@@ -453,7 +474,6 @@ def imageDate(path, useWindows):
     methodOrder = [
         ("wand", ["photoshop:DateCreated", "exif:DateTime", "exif:DateTimeOriginal", "exif:DateTimeDigitized", "dng:create.date"]),
         ("pillow", ["DateTimeOriginal", "DateTime", "DateTimeDigitized"]),
-        ("wand", ["date:modify"]),
     ]
 
     for method, tags in methodOrder:
@@ -461,13 +481,13 @@ def imageDate(path, useWindows):
             candidate = useWand(path, tag) if method == "wand" else usePillow(path, tag)
 
             if candidate:
-                return candidate, f"{method}:{tag}"
+                return candidate, f"{method.title()}:{tag}"
 
     if useWindows:
         candidate = useWin(path)
 
         if candidate:
-            return candidate, "filesystem:mtime"
+            return candidate, "filesystem modified time"
 
     return None, ""
 
@@ -486,13 +506,13 @@ def videoDate(path, useWindows):
         candidate = useFFMPEG(path, tag)
 
         if candidate:
-            return candidate, f"ffmpeg:{tag}"
+            return candidate, f"FFMPEG:{tag}"
 
     if useWindows:
         candidate = useWin(path)
 
         if candidate:
-            return candidate, "filesystem:mtime"
+            return candidate, "filesystem modified time"
 
     return None, ""
 
@@ -830,7 +850,7 @@ def uniqueLivePhotoPaths(name, pair, srcRoot, dest, args, sidecarMap):
 
     while True:
         destinations = {
-            pathKey(path): targetDirFor(path, srcRoot, dest, args.keep_structure) / f"{name}{path.suffix}"
+            pathKey(path): targetDirFor(path, srcRoot, dest, args.keep_structure) / f"{name}{correctedMediaExtension(path)}"
             for path in pair
         }
         conflicts = []
@@ -849,6 +869,18 @@ def uniqueLivePhotoPaths(name, pair, srcRoot, dest, args, sidecarMap):
 
         name = f"{base}_({counter})"
         counter += 1
+
+
+def movePendingOutput(path, targetPath):
+    if path == targetPath:
+        return path
+
+    if targetPath.exists():
+        targetPath = uniqueMediaPath(targetPath.stem, targetPath.suffix, targetPath.parent, [])
+
+    targetPath.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(path), str(targetPath))
+    return targetPath
 
 
 def copyOrMove(source, destPath, doCopy):
@@ -952,20 +984,20 @@ def incDateSource(stats, mediaType, dateSource):
         return
 
     if mediaType == "image":
-        if dateSource.startswith("wand:"):
+        if dateSource.startswith("Wand:"):
             stats.inc("wand_images")
-        elif dateSource.startswith("pillow:"):
+        elif dateSource.startswith("Pillow:"):
             stats.inc("pillow_images")
-        elif dateSource == "filesystem:mtime":
+        elif dateSource == "filesystem modified time":
             stats.inc("windows_images")
     elif mediaType == "video":
-        if dateSource.startswith("ffmpeg:"):
+        if dateSource.startswith("FFMPEG:"):
             stats.inc("ffmpeg_videos")
-        elif dateSource == "filesystem:mtime":
+        elif dateSource == "filesystem modified time":
             stats.inc("windows_videos")
 
 
-def processOne(path, srcRoot, dest, args, stats, sidecarMap, livePhotoMap, livePhotoIds, livePhotoDates, livePhotoDestinations):
+def processOne(path, srcRoot, dest, args, stats, sidecarMap, livePhotoMap, livePhotoIds, livePhotoDates, livePhotoDestinations, pendingDestinations):
     if stopEvent.is_set():
         return
 
@@ -1003,7 +1035,7 @@ def processOne(path, srcRoot, dest, args, stats, sidecarMap, livePhotoMap, liveP
             dateValue, dateOffset, dateSource = captureDateForMedia(path, args, sidecarMap)
 
         if dateValue:
-            newName = dateValue
+            newName = dateValueToFilename(dateValue)
         elif mediaType == "image":
             unchanged = True
         elif mediaType == "video":
@@ -1017,6 +1049,8 @@ def processOne(path, srcRoot, dest, args, stats, sidecarMap, livePhotoMap, liveP
                 return
 
             sidecars = sidecarMap.get(pathKey(path), [])
+            pendingPath = pendingDestinations.get(pathKey(path))
+            pendingPath = Path(pendingPath) if pendingPath else None
 
             if livePhotoPair:
                 if pathKey(path) not in livePhotoDestinations:
@@ -1027,10 +1061,16 @@ def processOne(path, srcRoot, dest, args, stats, sidecarMap, livePhotoMap, liveP
                 fullPath = livePhotoDestinations[pathKey(path)]
             else:
                 targetDir = targetDirFor(path, srcRoot, dest, args.keep_structure)
+                extSource = pendingPath if pendingPath and pendingPath.exists() else path
+                ext = correctedMediaExtension(extSource)
                 fullPath = uniqueMediaPath(newName, ext, targetDir, sidecars)
 
             fullPath.parent.mkdir(parents=True, exist_ok=True)
-            copyOrMove(source, fullPath, args.copy)
+
+            if pendingPath and pendingPath.exists() and pendingPath.is_file():
+                fullPath = movePendingOutput(pendingPath, fullPath)
+            else:
+                copyOrMove(source, fullPath, args.copy)
 
         incMediaTotal(stats, mediaType)
         incDateSource(stats, mediaType, dateSource)
@@ -1100,6 +1140,7 @@ def renameMedia(src, dest, args, resumeCompletedSources, resumeRows, stats):
     sidecarMap, associatedSidecars = buildSidecarMap(files, livePhotoMap=livePhotoMap)
     livePhotoDates = buildLivePhotoDateMap(livePhotoMap, sidecarMap, resumeRows, args)
     livePhotoDestinations = buildResumedLivePhotoDestinations(livePhotoMap, resumeRows)
+    pendingDestinations = pendingDestinationsFromRows(resumeRows)
     livePhotoPairs = {tuple(str(path) for path in pair) for pair in livePhotoMap.values()}
 
     if livePhotoPairs:
@@ -1148,6 +1189,7 @@ def renameMedia(src, dest, args, resumeCompletedSources, resumeRows, stats):
             livePhotoIds,
             livePhotoDates,
             livePhotoDestinations,
+            pendingDestinations,
         ),
         maxWorkers=args.workers,
         stopEvent=stopEvent,

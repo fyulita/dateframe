@@ -22,6 +22,7 @@ VIDEO_EXTS = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".mpg", ".mpeg", ".wmv", 
 UNSUPPORTED_EMBED_WRITE = {".avi", ".mpg", ".mpeg"}
 
 FILENAME_DT_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})T(\d{2})-(\d{2})-(\d{2})")
+DISPLAY_DT_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})[T\s](\d{2})[:-](\d{2})[:-](\d{2})")
 
 
 # ----------------------
@@ -56,6 +57,35 @@ def isVideo(path):
 
 def isMedia(path):
     return isImage(path) or isVideo(path)
+
+
+def detectedImageExtension(path):
+    try:
+        with open(path, "rb") as f:
+            header = f.read(12)
+    except OSError:
+        return ""
+
+    if header.startswith(b"\xff\xd8\xff"):
+        return ".jpg"
+
+    if header.startswith(b"\x89PNG\r\n\x1a\n"):
+        return ".png"
+
+    return ""
+
+
+def correctedMediaExtension(path):
+    path = Path(path)
+    actualExt = detectedImageExtension(path)
+
+    if not actualExt or path.suffix.lower() == actualExt:
+        return path.suffix
+
+    if path.suffix.lower() == ".png" and actualExt == ".jpg":
+        return ".jpg"
+
+    return path.suffix
 
 
 # ----------------------
@@ -195,6 +225,38 @@ def datetimeToFilename(dt):
 
 def datetimeToExiftool(dt):
     return dt.strftime("%Y:%m:%d %H:%M:%S")
+
+
+def splitDateValue(value):
+    if value is None:
+        return None
+
+    match = DISPLAY_DT_RE.match(str(value).strip())
+
+    if not match:
+        return None
+
+    return match.groups()
+
+
+def dateValueToFilename(value):
+    parts = splitDateValue(value)
+
+    if not parts:
+        return value
+
+    y, mo, d, h, mi, s = parts
+    return f"{y}-{mo}-{d}T{h}-{mi}-{s}"
+
+
+def dateValueToDisplay(value):
+    parts = splitDateValue(value)
+
+    if not parts:
+        return value
+
+    y, mo, d, h, mi, s = parts
+    return f"{y}-{mo}-{d} {h}:{mi}:{s}"
 
 
 def effectiveCommandPrefix(_scriptName, subcommand):

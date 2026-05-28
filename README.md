@@ -66,7 +66,7 @@ There are important differences between iCloud export paths.
 
 `dateframe import-icloud` works with iCloud Photos for Windows and can preserve useful iCloud/Windows date information. When possible, leave iCloud placeholder files undownloaded and resume failed copies from the generated CSV, because Windows may expose better capture-date information before a file is manually hydrated.
 
-iCloud Web exports may provide Live Photos as image/video pairs, which `dateframe rename` can identify and keep together. For the tradeoffs between both workflows, see the [iCloud section of the user guide](docs/user-guide.md#icloud-photos-for-windows).
+iCloud Web exports may provide Live Photos as image/video pairs, which `dateframe rename` can identify and keep together. For the tradeoffs between both workflows, see the [iCloud section of the User Guide](docs/USER-GUIDE.md#icloud-photos-for-windows).
 
 ## Requirements
 
