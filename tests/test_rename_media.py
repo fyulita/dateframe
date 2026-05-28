@@ -56,9 +56,67 @@ def testRenameMediaCopiesImageUsingDetectedDate(tmp_path, monkeypatch):
     rows = stats.getCsvRows()
     assert len(rows) == 1
     assert rows[0]["dest"] == str(renamed)
-    assert rows[0]["date"] == "2026-03-02T10-20-30"
+    assert rows[0]["date"] == "2026-03-02 10:20:30"
     assert rows[0]["date_source"] == "pillow:DateTimeOriginal"
     assert rows[0]["processed_ok"] is True
+
+
+def testRenameMediaCorrectsPngExtensionWhenContentIsJpeg(tmp_path, monkeypatch):
+    src = tmp_path / "src"
+    dest = tmp_path / "dest"
+    src.mkdir()
+    dest.mkdir()
+    image = src / "IMG_0001.PNG"
+    image.write_bytes(b"\xff\xd8\xff\xe1fake jpeg bytes")
+
+    monkeypatch.setattr(
+        rename_media,
+        "imageDate",
+        lambda path, useWindows: ("2026-03-02T10-20-30", "Pillow:DateTimeOriginal"),
+    )
+
+    stats = rename_media.Stats()
+    rename_media.renameMedia(src, dest, renameArgs(), set(), [], stats)
+
+    renamed = dest / "2026-03-02T10-20-30.jpg"
+    assert renamed.read_bytes() == b"\xff\xd8\xff\xe1fake jpeg bytes"
+    assert not (dest / "2026-03-02T10-20-30.PNG").exists()
+
+    row = stats.getCsvRows()[0]
+    assert row["dest"] == str(renamed)
+    assert row["date"] == "2026-03-02 10:20:30"
+    assert row["processed_ok"] is True
+
+
+def testImageDateUsesReadableDateSource(monkeypatch):
+    monkeypatch.setattr(rename_media, "useWand", lambda path, tag: "2026-03-02T10-20-30")
+
+    dateValue, dateSource = rename_media.imageDate("image.jpg", useWindows=False)
+
+    assert dateValue == "2026-03-02T10-20-30"
+    assert dateSource == "Wand:photoshop:DateCreated"
+
+
+def testImageDateDoesNotUseWandFilesystemModifyDate(monkeypatch):
+    def fakeUseWand(path, tag):
+        return "2026-03-02T10-20-30" if tag == "date:modify" else None
+
+    monkeypatch.setattr(rename_media, "useWand", fakeUseWand)
+    monkeypatch.setattr(rename_media, "usePillow", lambda path, tag: None)
+
+    dateValue, dateSource = rename_media.imageDate("image.jpg", useWindows=False)
+
+    assert dateValue is None
+    assert dateSource == ""
+
+
+def testVideoDateUsesReadableDateSource(monkeypatch):
+    monkeypatch.setattr(rename_media, "useFFMPEG", lambda path, tag: "2026-03-02T10-20-30")
+
+    dateValue, dateSource = rename_media.videoDate("video.mov", useWindows=False)
+
+    assert dateValue == "2026-03-02T10-20-30"
+    assert dateSource == "FFMPEG:creation_time"
 
 
 def testRenameMediaCopiesSonySidecarWithRenamedVideo(tmp_path):
@@ -399,6 +457,53 @@ def testRenameMediaResumeSkipsCompletedSource(tmp_path, monkeypatch):
     assert len(stats.getCsvRows()) == 1
     assert stats.getCsvRows()[0]["source"] == str(pending)
     assert (dest / "2026-03-02T10-20-30.JPG").exists()
+
+
+def testRenameMediaResumeRepairsPendingMislabeledPngOutput(tmp_path, monkeypatch):
+    src = tmp_path / "src"
+    dest = tmp_path / "dest"
+    src.mkdir()
+    dest.mkdir()
+    image = src / "IMG_0001.PNG"
+    image.write_bytes(b"source should not be recopied")
+    pending = dest / "2026-03-02T10-20-30.png"
+    pending.write_bytes(b"\xff\xd8\xff\xe1pending jpeg bytes")
+    resumeRows = [
+        {
+            "source": str(image),
+            "dest": str(pending),
+            "date": "2026-03-02 10:20:30",
+            "date_offset": "",
+            "media_type": "image",
+            "action": "copy",
+            "date_source": "Pillow:DateTimeOriginal",
+            "pair_type": "",
+            "pair_id": "",
+            "paired_source": "",
+            "processed_ok": "False",
+            "error": "previous failure",
+        }
+    ]
+
+    monkeypatch.setattr(
+        rename_media,
+        "imageDate",
+        lambda path, useWindows: ("2026-03-02T10-20-30", "Pillow:DateTimeOriginal"),
+    )
+    monkeypatch.setattr(
+        rename_media,
+        "copyOrMove",
+        lambda *args, **kwargs: pytest.fail("pending output should be reused"),
+    )
+
+    stats = rename_media.Stats()
+    rename_media.renameMedia(src, dest, renameArgs(), set(), resumeRows, stats)
+
+    repaired = dest / "2026-03-02T10-20-30.jpg"
+    assert not pending.exists()
+    assert repaired.read_bytes() == b"\xff\xd8\xff\xe1pending jpeg bytes"
+    assert stats.getCsvRows()[0]["dest"] == str(repaired)
+    assert stats.getCsvRows()[0]["processed_ok"] is True
 
 
 def testMainWritesLogsAndResumesFromGeneratedCsv(tmp_path, monkeypatch):

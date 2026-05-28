@@ -1,6 +1,9 @@
 import datetime
 
 from media_tools.media_common import (
+    correctedMediaExtension,
+    dateValueToDisplay,
+    dateValueToFilename,
     dtFromFilename,
     effectiveCommandPrefix,
     inDateRange,
@@ -24,6 +27,20 @@ def testFilenameAndSidecarHelpersUseMediaFilename():
     assert str(sidecarPathFor("2026-03-02T10-20-30.MP4", ".xmp")).endswith(
         "2026-03-02T10-20-30.MP4.xmp"
     )
+
+
+def testDateValueConversionAcceptsFilenameAndDisplayForms():
+    assert dateValueToDisplay("2026-03-02T10-20-30") == "2026-03-02 10:20:30"
+    assert dateValueToDisplay("2026-03-02 10:20:30") == "2026-03-02 10:20:30"
+    assert dateValueToFilename("2026-03-02 10:20:30") == "2026-03-02T10-20-30"
+    assert dateValueToFilename("2026-03-02T10-20-30") == "2026-03-02T10-20-30"
+
+
+def testCorrectedMediaExtensionDetectsJpegContentInsidePng(tmp_path):
+    mislabeled = tmp_path / "IMG_0001.PNG"
+    mislabeled.write_bytes(b"\xff\xd8\xff\xe0fake jpeg bytes")
+
+    assert correctedMediaExtension(mislabeled) == ".jpg"
 
 
 def testTxtInputIgnoresCommentsAndInvalidPaths(tmp_path):
