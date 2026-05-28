@@ -128,13 +128,14 @@ class Stats(BaseStats):
             else:
                 self.otherErroredFiles.add(sourcePath)
 
-    def addCsvRow(self, source, dest, dateValue, copiedOk, metadataOk, error):
+    def addCsvRow(self, source, dest, dateValue, copiedOk, metadataOk, error, dateSource=""):
         source = str(source)
         sourceKey = pathKey(source)
         row = {
             "source": source,
             "dest": "" if dest is None else str(dest),
             "date": "" if dateValue is None else str(dateValue),
+            "date_source": dateSource,
             "copied_ok": copiedOk,
             "metadata_ok": metadataOk,
             "error": error,
@@ -234,17 +235,28 @@ def dateWithEmbeddedSeconds(path, shellDate, options):
 
 def dateWithFilesystemSeconds(path, shellDate):
     if shellDate.second != 0:
-        return shellDate, False
+        return shellDate, ""
 
     try:
-        candidate = datetime.datetime.fromtimestamp(path.stat().st_mtime).replace(microsecond=0)
+        statResult = path.stat()
     except OSError:
-        return shellDate, False
+        return shellDate, ""
 
-    if candidate.replace(second=0, microsecond=0) != shellDate.replace(second=0, microsecond=0):
-        return shellDate, False
+    candidates = [
+        ("filesystem created seconds", statResult.st_ctime),
+        ("filesystem modified seconds", statResult.st_mtime),
+    ]
 
-    return candidate, candidate != shellDate
+    for source, timestamp in candidates:
+        candidate = datetime.datetime.fromtimestamp(timestamp).replace(microsecond=0)
+
+        if candidate.replace(second=0, microsecond=0) != shellDate.replace(second=0, microsecond=0):
+            continue
+
+        if candidate != shellDate:
+            return candidate, source
+
+    return shellDate, ""
 
 
 def embeddedCaptureDate(path, options):
@@ -271,14 +283,66 @@ def metadataWithSelectedDate(metadata, path, dateValue):
     return adjusted
 
 
-def dateDetail(shellDateColumn, usedEmbeddedSeconds, usedFilesystemSeconds):
+def dateDetail(shellDateColumn, usedEmbeddedSeconds, filesystemSecondsSource):
     if usedEmbeddedSeconds:
         return f"{shellDateColumn} + embedded seconds"
 
-    if usedFilesystemSeconds:
-        return f"{shellDateColumn} + filesystem seconds"
+    if filesystemSecondsSource:
+        return f"{shellDateColumn} + {filesystemSecondsSource}"
 
     return shellDateColumn
+
+
+def correctedPendingOutputPath(path, filename, ext):
+    if path.stem == filename or path.stem.startswith(f"{filename}_("):
+        return path
+
+    correctedPath = reserveUniquePath(filename, ext, str(path.parent), reservedPaths, filenameLock)
+
+    try:
+        shutil.move(str(path), str(correctedPath))
+    except Exception:
+        releaseReservedPath(correctedPath, reservedPaths, filenameLock)
+        raise
+
+    return correctedPath
+
+
+def detectedImageExtension(path):
+    try:
+        with open(path, "rb") as f:
+            header = f.read(12)
+    except OSError:
+        return ""
+
+    if header.startswith(b"\xff\xd8\xff"):
+        return ".jpg"
+
+    if header.startswith(b"\x89PNG\r\n\x1a\n"):
+        return ".png"
+
+    return ""
+
+
+def correctedOutputExtension(path):
+    actualExt = detectedImageExtension(path)
+
+    if not actualExt or path.suffix.lower() == actualExt:
+        return path
+
+    if path.suffix.lower() != ".png" or actualExt != ".jpg":
+        return path
+
+    correctedPath = reserveUniquePath(path.stem, actualExt, str(path.parent), reservedPaths, filenameLock)
+
+    try:
+        shutil.move(str(path), str(correctedPath))
+    except Exception:
+        releaseReservedPath(correctedPath, reservedPaths, filenameLock)
+        raise
+
+    releaseReservedPath(path, reservedPaths, filenameLock)
+    return correctedPath
 
 
 # ----------------------
@@ -351,6 +415,7 @@ def processOne(
     outPath = None
     shellDate = None
     metadataOk = ""
+    selectedDateSource = ""
 
     try:
         if stopEvent.is_set():
@@ -375,7 +440,7 @@ def processOne(
             shellDate, shellDateColumn = getShellDate(path, dateOrder=options.dateOrder)
 
         usedEmbeddedSeconds = False
-        usedFilesystemSeconds = False
+        filesystemSecondsSource = ""
 
         if shellDate is None:
             shellDate = embeddedCaptureDate(path, options)
@@ -388,14 +453,16 @@ def processOne(
 
         if not inDateRange(shellDate, options.fromDate, options.toDate):
             stats.inc("skipped_outside_date_range")
-            stats.addCsvRow(path, None, shellDate, "", "", "outside date range")
+            stats.addCsvRow(path, None, shellDate, "", "", "outside date range", dateSource=shellDateColumn)
             return
 
         if shellDateColumn != "embedded metadata":
             shellDate, usedEmbeddedSeconds = dateWithEmbeddedSeconds(path, shellDate, options)
 
             if not usedEmbeddedSeconds:
-                shellDate, usedFilesystemSeconds = dateWithFilesystemSeconds(path, shellDate)
+                shellDate, filesystemSecondsSource = dateWithFilesystemSeconds(path, shellDate)
+
+        selectedDateSource = dateDetail(shellDateColumn, usedEmbeddedSeconds, filesystemSecondsSource)
 
         if isImage(path):
             stats.inc("processed_images")
@@ -419,12 +486,13 @@ def processOne(
 
         if resumeCopiedPath and resumeCopiedPath.exists() and resumeCopiedPath.is_file():
             outPath = resumeCopiedPath
+            outPath = correctedPendingOutputPath(resumeCopiedPath, filename, ext)
+            outPath = correctedOutputExtension(outPath)
 
             if not options.quiet:
                 with printLock:
                     print("[METADATA RETRY]")
-                    detail = dateDetail(shellDateColumn, usedEmbeddedSeconds, usedFilesystemSeconds)
-                    print(f"  DATE: {shellDate} ({detail})")
+                    print(f"  DATE: {shellDate} ({selectedDateSource})")
                     print(f"  FROM: {path}")
                     print(f"  TO:   {outPath}")
                     print()
@@ -439,8 +507,9 @@ def processOne(
                     retries=options.copyRetries,
                     delay=options.copyRetryDelay,
                 )
+                outPath = correctedOutputExtension(outPath)
                 stats.addCopied(str(outPath))
-                stats.addCsvRow(path, outPath, shellDate, True, False, "metadata pending")
+                stats.addCsvRow(path, outPath, shellDate, True, False, "metadata pending", dateSource=selectedDateSource)
             except KeyboardInterrupt:
                 stopEvent.set()
                 releaseReservedPath(outPath, reservedPaths, filenameLock)
@@ -448,7 +517,7 @@ def processOne(
             except Exception as e:
                 stats.addCopyErrored(str(path))
                 releaseReservedPath(outPath, reservedPaths, filenameLock)
-                stats.addCsvRow(path, outPath, shellDate, False, "", str(e))
+                stats.addCsvRow(path, outPath, shellDate, False, "", str(e), dateSource=selectedDateSource)
 
                 with printLock:
                     print(f"[COPY ERROR] {path}")
@@ -459,9 +528,8 @@ def processOne(
 
             if not options.quiet:
                 with printLock:
-                    detail = dateDetail(shellDateColumn, usedEmbeddedSeconds, usedFilesystemSeconds)
                     print("[COPY]")
-                    print(f"  DATE: {shellDate} ({detail})")
+                    print(f"  DATE: {shellDate} ({selectedDateSource})")
                     print(f"  FROM: {path}")
                     print(f"  TO:   {outPath}")
                     print()
@@ -473,7 +541,7 @@ def processOne(
             except Exception as e:
                 stats.inc("xmp_sidecar_errors")
                 stats.addMetadataErrored(str(path))
-                stats.addCsvRow(path, outPath, shellDate, True, False, f"xmp sidecar error: {e}")
+                stats.addCsvRow(path, outPath, shellDate, True, False, f"xmp sidecar error: {e}", dateSource=selectedDateSource)
 
                 with printLock:
                     print(f"[XMP SIDECAR ERROR] {path}")
@@ -485,13 +553,13 @@ def processOne(
         if options.noMetadata:
             stats.inc("metadata_skipped_disabled")
             metadataOk = ""
-            stats.addCsvRow(path, outPath, shellDate, True, metadataOk, "")
+            stats.addCsvRow(path, outPath, shellDate, True, metadataOk, "", dateSource=selectedDateSource)
             return
 
         if options.skipVideoMetadata and isVideo(path):
             stats.inc("metadata_skipped_videos")
             metadataOk = ""
-            stats.addCsvRow(path, outPath, shellDate, True, metadataOk, "")
+            stats.addCsvRow(path, outPath, shellDate, True, metadataOk, "", dateSource=selectedDateSource)
             return
 
         rc, exiftoolError = writeEmbeddedMetadata(
@@ -510,18 +578,18 @@ def processOne(
         elif rc == 124:
             stats.inc("exiftool_timeouts")
             stats.addMetadataErrored(str(path))
-            stats.addCsvRow(path, outPath, shellDate, True, False, "exiftool timeout")
+            stats.addCsvRow(path, outPath, shellDate, True, False, "exiftool timeout", dateSource=selectedDateSource)
             return
         elif rc == 130:
             stopEvent.set()
             stats.addMetadataErrored(str(path))
-            stats.addCsvRow(path, outPath, shellDate, True, False, "interrupted")
+            stats.addCsvRow(path, outPath, shellDate, True, False, "interrupted", dateSource=selectedDateSource)
             return
         else:
             stats.inc("exiftool_errors")
             stats.addMetadataErrored(str(path))
             detail = exiftoolError or f"return code {rc}"
-            stats.addCsvRow(path, outPath, shellDate, True, False, f"ExifTool Error: {detail}")
+            stats.addCsvRow(path, outPath, shellDate, True, False, f"ExifTool Error: {detail}", dateSource=selectedDateSource)
             return
 
         if options.verify:
@@ -537,15 +605,15 @@ def processOne(
             if verified:
                 stats.inc("metadata_verified")
                 metadataOk = True
-                stats.addCsvRow(path, outPath, shellDate, True, True, "")
+                stats.addCsvRow(path, outPath, shellDate, True, True, "", dateSource=selectedDateSource)
             else:
                 stats.inc("metadata_verify_failed")
                 stats.addMetadataErrored(str(path))
                 metadataOk = False
-                stats.addCsvRow(path, outPath, shellDate, True, False, verifyError)
+                stats.addCsvRow(path, outPath, shellDate, True, False, verifyError, dateSource=selectedDateSource)
         else:
             metadataOk = True
-            stats.addCsvRow(path, outPath, shellDate, True, True, "")
+            stats.addCsvRow(path, outPath, shellDate, True, True, "", dateSource=selectedDateSource)
 
     except KeyboardInterrupt:
         stopEvent.set()
@@ -554,10 +622,10 @@ def processOne(
     except Exception as e:
         if outPath and outPath.exists():
             stats.addMetadataErrored(str(path))
-            stats.addCsvRow(path, outPath, shellDate, True, False, str(e))
+            stats.addCsvRow(path, outPath, shellDate, True, False, str(e), dateSource=selectedDateSource)
         else:
             stats.addCopyErrored(str(path))
-            stats.addCsvRow(path, outPath, shellDate, False, metadataOk, str(e))
+            stats.addCsvRow(path, outPath, shellDate, False, metadataOk, str(e), dateSource=selectedDateSource)
 
         with printLock:
             print(f"[ERROR] {path}")

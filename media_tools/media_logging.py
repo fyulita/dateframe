@@ -9,7 +9,7 @@ from pathlib import Path
 from media_tools.media_common import resolvePath, saveSimpleLog, timestampedName
 
 
-CSV_FIELDS = ["source", "dest", "date", "copied_ok", "metadata_ok", "error"]
+CSV_FIELDS = ["source", "dest", "date", "date_source", "copied_ok", "metadata_ok", "error"]
 
 RUN_CONTEXT_FIELDS = [
     "run_src",

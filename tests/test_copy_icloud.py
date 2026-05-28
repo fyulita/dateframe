@@ -1,6 +1,7 @@
 import datetime
 import os
 import threading
+from types import SimpleNamespace
 
 import pytest
 
@@ -78,6 +79,38 @@ def testProcessOneCopiesMediaAndWritesMetadata(tmp_path, monkeypatch):
     assert row["error"] == ""
 
 
+def testProcessOneRenamesPngWithJpegContentBeforeWritingMetadata(tmp_path, monkeypatch):
+    src = tmp_path / "src"
+    dest = tmp_path / "dest"
+    src.mkdir()
+    source = src / "IMG_0001.PNG"
+    source.write_bytes(b"\xff\xd8\xff\xe0fake jpeg bytes")
+    shellDate = datetime.datetime(2026, 3, 2, 10, 20, 30)
+    written = []
+
+    monkeypatch.setattr(copy_icloud, "getShellDate", lambda path, dateOrder: (shellDate, "Date taken"))
+
+    def fakeWriteEmbeddedMetadata(**kwargs):
+        written.append(kwargs["copiedPath"])
+        return 0, ""
+
+    monkeypatch.setattr(copy_icloud, "writeEmbeddedMetadata", fakeWriteEmbeddedMetadata)
+
+    stats = copy_icloud.Stats()
+    copy_icloud.processOne(source, src, "folder", dest, copyOptions(), stats)
+
+    copied = dest / "2026-03-02T10-20-30.jpg"
+    assert copied.read_bytes() == b"\xff\xd8\xff\xe0fake jpeg bytes"
+    assert not (dest / "2026-03-02T10-20-30.png").exists()
+    assert written == [copied]
+
+    row = stats.getCsvRows()[0]
+    assert row["dest"] == str(copied)
+    assert row["copied_ok"] is True
+    assert row["metadata_ok"] is True
+    assert row["error"] == ""
+
+
 def testCopyWithRetryStopsBeforeWaitingForNextAttemptWhenInterrupted(tmp_path, monkeypatch):
     source = tmp_path / "source.jpg"
     copied = tmp_path / "copied.jpg"
@@ -148,6 +181,7 @@ def testProcessOnePreservesEmbeddedSecondsMatchingShellMinute(tmp_path, monkeypa
     assert copied.exists()
     assert written == [{"Date taken": "2026:05:25 15:36:28"}]
     assert stats.getCsvRows()[0]["date"] == "2026-05-25 15:36:28"
+    assert stats.getCsvRows()[0]["date_source"] == "Date taken + embedded seconds"
 
 
 def testProcessOneDoesNotUseEmbeddedDateFromDifferentMinute(tmp_path, monkeypatch):
@@ -211,6 +245,22 @@ def testProcessOneRefinesShellDateWithMatchingFilesystemSeconds(tmp_path, monkey
     assert (dest / "2024-02-10T05-22-59.jpg").exists()
     assert written == [{"Date taken": "2024:02:10 05:22:59"}]
     assert stats.getCsvRows()[0]["date"] == "2024-02-10 05:22:59"
+    assert stats.getCsvRows()[0]["date_source"] == "Date taken + filesystem modified seconds"
+
+
+def testDateWithFilesystemSecondsPrefersMatchingCreationTimestamp():
+    shellDate = datetime.datetime(2023, 10, 26, 18, 35, 0)
+    created = datetime.datetime(2023, 10, 26, 18, 35, 37).timestamp()
+    modified = datetime.datetime(2023, 10, 26, 18, 36, 6).timestamp()
+
+    class Source:
+        def stat(self):
+            return SimpleNamespace(st_ctime=created, st_mtime=modified)
+
+    dateValue, dateSource = copy_icloud.dateWithFilesystemSeconds(Source(), shellDate)
+
+    assert dateValue == datetime.datetime(2023, 10, 26, 18, 35, 37)
+    assert dateSource == "filesystem created seconds"
 
 
 def testProcessOneDoesNotUseFilesystemSecondsFromDifferentMinute(tmp_path, monkeypatch):
@@ -379,6 +429,97 @@ def testMetadataRetryUsesExistingCopyWithoutCopyingAgain(tmp_path, monkeypatch):
     row = stats.getCsvRows()[0]
     assert copied.read_bytes() == b"existing copy"
     assert row["dest"] == str(copied)
+    assert row["copied_ok"] is True
+    assert row["metadata_ok"] is True
+
+
+def testMetadataRetryRenamesPendingOutputWhenRecoveredSecondsChangeFilename(tmp_path, monkeypatch):
+    src = tmp_path / "src"
+    dest = tmp_path / "dest"
+    src.mkdir()
+    dest.mkdir()
+    source = src / "ICLOUD.JPG"
+    source.write_bytes(b"source")
+    copied = dest / "2023-10-26T18-35-00.jpg"
+    copied.write_bytes(b"existing copy")
+
+    monkeypatch.setattr(
+        copy_icloud,
+        "dateWithFilesystemSeconds",
+        lambda path, dateValue: (
+            datetime.datetime(2023, 10, 26, 18, 35, 37),
+            "filesystem created seconds",
+        ),
+    )
+    monkeypatch.setattr(copy_icloud, "captureDateFromEmbeddedMedia", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        copy_icloud,
+        "copyWithRetry",
+        lambda *args, **kwargs: pytest.fail("metadata retry must not copy source again"),
+    )
+    monkeypatch.setattr(copy_icloud, "writeEmbeddedMetadata", lambda **kwargs: (0, ""))
+
+    stats = copy_icloud.Stats()
+    copy_icloud.processOne(
+        source,
+        src,
+        "folder",
+        dest,
+        copyOptions(),
+        stats,
+        resumeCopiedPath=str(copied),
+        resumeDate="2023-10-26 18:35:00",
+    )
+
+    corrected = dest / "2023-10-26T18-35-37.jpg"
+    row = stats.getCsvRows()[0]
+    assert not copied.exists()
+    assert corrected.read_bytes() == b"existing copy"
+    assert row["dest"] == str(corrected)
+    assert row["date_source"] == "resume CSV date + filesystem created seconds"
+
+
+def testMetadataRetryRenamesPngWithJpegContentBeforeWritingMetadata(tmp_path, monkeypatch):
+    src = tmp_path / "src"
+    dest = tmp_path / "dest"
+    src.mkdir()
+    dest.mkdir()
+    source = src / "IMG_0001.PNG"
+    source.write_bytes(b"source")
+    copied = dest / "2026-03-02T10-20-30.png"
+    copied.write_bytes(b"\xff\xd8\xff\xe1fake jpeg bytes")
+    written = []
+
+    monkeypatch.setattr(
+        copy_icloud,
+        "copyWithRetry",
+        lambda *args, **kwargs: pytest.fail("metadata retry must not copy source again"),
+    )
+
+    def fakeWriteEmbeddedMetadata(**kwargs):
+        written.append(kwargs["copiedPath"])
+        return 0, ""
+
+    monkeypatch.setattr(copy_icloud, "writeEmbeddedMetadata", fakeWriteEmbeddedMetadata)
+
+    stats = copy_icloud.Stats()
+    copy_icloud.processOne(
+        source,
+        src,
+        "folder",
+        dest,
+        copyOptions(),
+        stats,
+        resumeCopiedPath=str(copied),
+        resumeDate="2026-03-02 10:20:30",
+    )
+
+    corrected = dest / "2026-03-02T10-20-30.jpg"
+    row = stats.getCsvRows()[0]
+    assert not copied.exists()
+    assert corrected.read_bytes() == b"\xff\xd8\xff\xe1fake jpeg bytes"
+    assert written == [corrected]
+    assert row["dest"] == str(corrected)
     assert row["copied_ok"] is True
     assert row["metadata_ok"] is True
 
