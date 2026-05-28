@@ -23,23 +23,25 @@ You do not need to clone this repository to use DateFrame. Cloning is only neede
 
 ## Quick Start
 
-Import files directly from iCloud Photos on Windows:
+### Import files directly from iCloud Photos on Windows:
 
 ```powershell
 dateframe import-icloud "C:\Users\You\Pictures\iCloud Photos\Photos" "C:\Users\You\Pictures\iCloud-Renamed"
 ```
 
-Copy and rename media from a camera folder or export:
+### Copy and rename media from a camera folder or export:
 
 ```powershell
 dateframe rename --copy "/path/to/originals" "/path/to/renamed"
 ```
 
-Write filename dates back into media metadata:
+### Write filename dates back into media metadata:
 
 ```powershell
 dateframe write-dates "/path/to/renamed"
 ```
+
+For detailed workflows, date-source priority, resume behavior, iCloud caveats, Live Photos, and metadata repair notes, see the [User Guide](docs/user-guide.md).
 
 ## Commands
 
@@ -58,48 +60,13 @@ dateframe rename --help
 dateframe import-icloud --help
 ```
 
-## Media Handling
-
-`dateframe rename` uses dates found in embedded metadata and supported sidecars. It keeps associated `.xmp` and `.xml` sidecars with renamed media, including Sony-style video XML sidecars:
-
-```text
-C0001.MP4    -> 2026-03-02T03-20-52.MP4
-C0001M01.XML -> 2026-03-02T03-20-52.MP4.M01.XML
-```
-
-Apple Live Photo image/video pairs are confirmed with embedded identifiers through ExifTool, then renamed to a common timestamp:
-
-```text
-IMG_1234.JPG -> 2026-03-02T03-20-52.JPG
-IMG_1234.MOV -> 2026-03-02T03-20-52.MOV
-```
-
-## Logging And Resume
-
-The processing commands (`import-icloud`, `rename`, and `write-dates`) write logs to `./logs` by default:
-
-- A CSV log records per-file results, including the selected date source, and is the source used to resume.
-- A TXT log records run times, the effective `dateframe <command>` invocation, interruption state, and summary counts.
-- A periodic checkpoint CSV preserves recent progress if a run is interrupted suddenly.
-
-Resume an interrupted run from its most recent CSV or checkpoint:
-
-```bash
-dateframe rename --resume-csv "./logs/dateframe_rename_2026-05-22T13-37-05.csv"
-dateframe import-icloud --resume-csv "./logs/dateframe_import-icloud_2026-05-21T22-54-12_checkpoint.csv"
-```
-
-The latest resumed CSV includes previously recorded history, so it becomes the next file to use when continuing. Logs created by earlier versions with legacy script-based names remain valid resume inputs.
-
 ## iCloud Notes
 
-There are important differences between iCloud export paths:
+There are important differences between iCloud export paths.
 
-- `dateframe import-icloud` operates on the iCloud Photos folder exposed by the Windows application. It can preserve useful iCloud/Windows date information, but Live Photo video components are not available there when iCloud exposes only the image file.
-- For `dateframe import-icloud`, leave iCloud placeholder files undownloaded when possible: Windows may expose useful iCloud capture dates before a file is downloaded, then replace them after hydration. DateFrame refines minute-only iCloud dates with matching embedded, file creation, or file modification seconds when available; filesystem seconds are used only when their local date and minute match the detected iCloud date. If a cloud download fails after its date was detected, resume from the generated CSV so DateFrame can reuse the preserved date.
-- Downloads from iCloud Web may provide Live Photos as image and video pairs, which `dateframe rename` can identify and keep together. Some exported files may not contain reliable capture-date metadata.
+`dateframe import-icloud` works with iCloud Photos for Windows and can preserve useful iCloud/Windows date information. When possible, leave iCloud placeholder files undownloaded and resume failed copies from the generated CSV, because Windows may expose better capture-date information before a file is manually hydrated.
 
-Extended workflow guidance and findings about iCloud exports, Live Photos, metadata sources, and recovery strategies are good candidates for the project wiki.
+iCloud Web exports may provide Live Photos as image/video pairs, which `dateframe rename` can identify and keep together. For the tradeoffs between both workflows, see the [iCloud section of the user guide](docs/user-guide.md#icloud-photos-for-windows).
 
 ## Requirements
 
@@ -129,4 +96,4 @@ For security-sensitive reports, see [SECURITY.md](SECURITY.md).
 
 ## License
 
-DateFrame is licensed under the GNU Affero General Public License v3.0 (`AGPL-3.0-only`). It may be used commercially, but modified versions made available over a network must also offer their corresponding source code. See [LICENSE.md](LICENSE.md).
+DateFrame is licensed under the GNU Affero General Public License v3.0 (`AGPL-3.0-only`). See [LICENSE.md](LICENSE.md).
