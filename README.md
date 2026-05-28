@@ -41,7 +41,7 @@ dateframe rename --copy "/path/to/originals" "/path/to/renamed"
 dateframe write-dates "/path/to/renamed"
 ```
 
-For detailed workflows, date-source priority, resume behavior, iCloud caveats, Live Photos, and metadata repair notes, see the [User Guide](docs/user-guide.md).
+For detailed workflows, date-source priority, resume behavior, iCloud caveats, Live Photos, and metadata repair notes, see the [User Guide](docs/USER-GUIDE.md).
 
 ## Commands
 
