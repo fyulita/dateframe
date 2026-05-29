@@ -22,7 +22,7 @@ IS_WINDOWS = platform.system() == "Windows"
 def useWand(path):
     try:
         with wand.Image(filename=path) as img:
-            print("Wand Metadata:\n")
+            print("Wand Metadata (raw ImageMagick properties; date:create/date:modify may be filesystem timestamps):\n")
             for key, value in img.metadata.items():
                 print(f"{key}: {value}")
         print("\n")
@@ -78,7 +78,7 @@ def useWindows(path):
     try:
         ts = os.path.getmtime(path)
         dt = datetime.datetime.fromtimestamp(ts)
-        print(f"Windows Modified Date: {dt}\n")
+        print(f"Windows Modified Date (local filesystem time, not embedded capture metadata): {dt}\n")
 
     except Exception as e:
         print("Error getting Windows Modified Date:")
