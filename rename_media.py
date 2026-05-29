@@ -22,6 +22,7 @@ from media_tools.capture_dates import captureDateFromAssociatedSidecars
 from media_tools.media_common import (
     BaseStats,
     correctedMediaExtension,
+    datePrecisionFromSource,
     dateValueToDisplay,
     dateValueToFilename,
     effectiveCommandPrefix,
@@ -73,6 +74,7 @@ CSV_FIELDS = [
     "media_type",
     "action",
     "date_source",
+    "date_precision",
     "pair_type",
     "pair_id",
     "paired_source",
@@ -160,12 +162,15 @@ class Stats(BaseStats):
         dateSource,
         processedOk,
         error,
+        datePrecision="",
         pairType="",
         pairId="",
         pairedSource="",
     ):
         source = str(source)
         sourceKey = pathKey(source)
+        if dateValue is not None and not datePrecision:
+            datePrecision = datePrecisionFromSource(dateValue, dateSource)
         row = {
             "source": source,
             "dest": "" if dest is None else str(dest),
@@ -174,6 +179,7 @@ class Stats(BaseStats):
             "media_type": mediaType,
             "action": action,
             "date_source": dateSource,
+            "date_precision": datePrecision,
             "pair_type": pairType,
             "pair_id": pairId,
             "paired_source": "" if not pairedSource else str(pairedSource),

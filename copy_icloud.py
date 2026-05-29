@@ -20,6 +20,7 @@ from media_tools.media_common import (
     detectedImageExtension,
     datetimeToExiftool,
     datetimeToFilename,
+    datePrecisionFromSource,
     inDateRange,
     isImage,
     isMedia,
@@ -129,14 +130,17 @@ class Stats(BaseStats):
             else:
                 self.otherErroredFiles.add(sourcePath)
 
-    def addCsvRow(self, source, dest, dateValue, copiedOk, metadataOk, error, dateSource=""):
+    def addCsvRow(self, source, dest, dateValue, copiedOk, metadataOk, error, dateSource="", datePrecision=""):
         source = str(source)
         sourceKey = pathKey(source)
+        if dateValue is not None and not datePrecision:
+            datePrecision = datePrecisionFromSource(dateValue, dateSource)
         row = {
             "source": source,
             "dest": "" if dest is None else str(dest),
             "date": "" if dateValue is None else str(dateValue),
             "date_source": dateSource,
+            "date_precision": datePrecision,
             "copied_ok": copiedOk,
             "metadata_ok": metadataOk,
             "error": error,
