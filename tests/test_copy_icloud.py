@@ -182,6 +182,7 @@ def testProcessOnePreservesEmbeddedSecondsMatchingShellMinute(tmp_path, monkeypa
     assert written == [{"Date taken": "2026:05:25 15:36:28"}]
     assert stats.getCsvRows()[0]["date"] == "2026-05-25 15:36:28"
     assert stats.getCsvRows()[0]["date_source"] == "Date taken + embedded seconds"
+    assert stats.getCsvRows()[0]["date_precision"] == "second_recovered"
 
 
 def testProcessOneDoesNotUseEmbeddedDateFromDifferentMinute(tmp_path, monkeypatch):
@@ -246,6 +247,7 @@ def testProcessOneRefinesShellDateWithMatchingFilesystemSeconds(tmp_path, monkey
     assert written == [{"Date taken": "2024:02:10 05:22:59"}]
     assert stats.getCsvRows()[0]["date"] == "2024-02-10 05:22:59"
     assert stats.getCsvRows()[0]["date_source"] == "Date taken + filesystem modified seconds"
+    assert stats.getCsvRows()[0]["date_precision"] == "second_recovered"
 
 
 def testDateWithFilesystemSecondsPrefersMatchingCreationTimestamp():

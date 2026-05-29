@@ -91,6 +91,12 @@ Legacy CSV logs using script-based prefixes, such as `copy_icloud_` or
 A resumed CSV contains previously recorded rows plus new or retried rows. Use
 the latest CSV when continuing a repeatedly interrupted run.
 
+Processing CSVs include `date_source` and `date_precision` so `:00` seconds
+can be interpreted correctly. `second` means DateFrame used a source that
+records seconds, `minute` means the source only exposed minute precision, and
+`second_recovered` means the base date was minute-only but seconds were
+recovered from another matching source.
+
 ## `dateframe import-icloud`
 
 ### Purpose
@@ -262,6 +268,7 @@ The `import-icloud` CSV includes:
 | `dest` | Copied output path |
 | `date` | Selected timestamp used for output naming and metadata |
 | `date_source` | Why that timestamp was selected |
+| `date_precision` | Whether the selected timestamp is second-level, minute-only, or second-recovered |
 | `copied_ok` | Whether copying succeeded |
 | `metadata_ok` | Whether metadata writing succeeded or was applicable |
 | `error` | Error or pending explanation |
@@ -410,8 +417,8 @@ independent backup.
 ### CSV Fields
 
 The `rename` CSV includes the output destination, selected date, optional
-timezone offset, media type, action (`copy` or `move`), `date_source`, Live
-Photo pairing fields, success state, and errors.
+timezone offset, media type, action (`copy` or `move`), `date_source`,
+`date_precision`, Live Photo pairing fields, success state, and errors.
 
 ### Selected Options
 
@@ -533,7 +540,8 @@ so a later `--resume-csv` run retries that file.
 The `write-dates` CSV records:
 
 ```text
-source, date, date_offset, date_source, metadata_ok, write_target, error
+source, date, date_offset, date_source, date_precision, metadata_ok,
+write_target, error
 ```
 
 `write_target` identifies whether data was written into the media, into an XMP

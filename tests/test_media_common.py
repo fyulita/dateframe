@@ -2,6 +2,7 @@ import datetime
 
 from media_tools.media_common import (
     correctedMediaExtension,
+    datePrecisionFromSource,
     dateValueToDisplay,
     dateValueToFilename,
     dtFromFilename,
@@ -34,6 +35,14 @@ def testDateValueConversionAcceptsFilenameAndDisplayForms():
     assert dateValueToDisplay("2026-03-02 10:20:30") == "2026-03-02 10:20:30"
     assert dateValueToFilename("2026-03-02 10:20:30") == "2026-03-02T10-20-30"
     assert dateValueToFilename("2026-03-02T10-20-30") == "2026-03-02T10-20-30"
+
+
+def testDatePrecisionDistinguishesMinuteOnlyAndRecoveredSeconds():
+    assert datePrecisionFromSource("2026-03-02 10:20:00", "Date taken") == "minute"
+    assert datePrecisionFromSource("2026-03-02 10:20:30", "Date taken") == "second"
+    assert datePrecisionFromSource("2026-03-02 10:20:30", "Date taken + embedded seconds") == "second_recovered"
+    assert datePrecisionFromSource("2026-03-02 10:20:00", "Pillow:DateTimeOriginal") == "second"
+    assert datePrecisionFromSource("2026-03-02T10-20-00", "filename") == "second"
 
 
 def testCorrectedMediaExtensionDetectsJpegContentInsidePng(tmp_path):

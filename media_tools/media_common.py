@@ -259,6 +259,44 @@ def dateValueToDisplay(value):
     return f"{y}-{mo}-{d} {h}:{mi}:{s}"
 
 
+def dateSecond(value):
+    if value is None:
+        return None
+
+    if isinstance(value, datetime.datetime):
+        return value.second
+
+    parts = splitDateValue(value)
+
+    if not parts:
+        return None
+
+    return int(parts[-1])
+
+
+def datePrecisionFromSource(value, source=""):
+    if value is None:
+        return ""
+
+    source = str(source or "").casefold()
+
+    if "embedded seconds" in source or "filesystem" in source:
+        return "second_recovered"
+
+    if "embedded" in source or "filename" in source or "sidecar" in source:
+        return "second"
+
+    if source.startswith(("wand:", "pillow:", "ffmpeg:")):
+        return "second"
+
+    second = dateSecond(value)
+
+    if second is None:
+        return ""
+
+    return "minute" if second == 0 else "second"
+
+
 def effectiveCommandPrefix(_scriptName, subcommand):
     return ["dateframe", subcommand]
 

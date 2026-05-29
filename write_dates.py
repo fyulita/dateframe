@@ -10,6 +10,7 @@ from media_tools.capture_dates import CaptureDate, captureDateFromAssociatedSide
 from media_tools.media_common import (
     BaseStats,
     UNSUPPORTED_EMBED_WRITE,
+    datePrecisionFromSource,
     effectiveCommandPrefix,
     isImage,
     isVideo,
@@ -38,7 +39,7 @@ from media_tools.metadata_writer import verifyWrittenDate
 # Config / constants
 # ----------------------
 
-CSV_FIELDS = ["source", "date", "date_offset", "date_source", "metadata_ok", "write_target", "error"]
+CSV_FIELDS = ["source", "date", "date_offset", "date_source", "date_precision", "metadata_ok", "write_target", "error"]
 
 RUN_CONTEXT_FIELDS = [
     "run_src",
@@ -100,14 +101,17 @@ class Stats(BaseStats):
         with self.lock:
             self.skippedFiles.append(filename)
 
-    def addCsvRow(self, source, dateValue, dateOffset, dateSource, metadataOk, writeTarget, error):
+    def addCsvRow(self, source, dateValue, dateOffset, dateSource, metadataOk, writeTarget, error, datePrecision=""):
         source = str(source)
         sourceKey = pathKey(source)
+        if dateValue is not None and not datePrecision:
+            datePrecision = datePrecisionFromSource(dateValue, dateSource)
         row = {
             "source": source,
             "date": "" if dateValue is None else str(dateValue),
             "date_offset": "" if dateOffset is None else str(dateOffset),
             "date_source": dateSource,
+            "date_precision": datePrecision,
             "metadata_ok": metadataOk,
             "write_target": writeTarget,
             "error": error,
