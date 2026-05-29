@@ -116,6 +116,7 @@ SUMMARY_COUNT_KEYS = [
     "damaged_others",
     "damaged_sidecars",
     "live_photo_pairs",
+    "incomplete_live_photos",
     "errors",
     "skipped_resume_completed",
 ]
@@ -712,14 +713,15 @@ def buildLivePhotoMap(files, resumeRows, args):
     enabled = args.live_photos
 
     if not enabled:
-        return {}, {}
+        return {}, {}, {}
 
     livePhotoMap = {}
     livePhotoIds = {}
+    incompleteLivePhotoIds = {}
     imagePaths = [path for path in files if isLivePhotoImage(path)]
     videoPaths = [path for path in files if path.suffix.lower() in LIVE_PHOTO_VIDEO_EXTS]
 
-    if imagePaths and videoPaths:
+    if imagePaths:
         identifiers = readLivePhotoIdentifiers(imagePaths + videoPaths, args)
         imagesById = {}
         videosById = {}
@@ -742,6 +744,9 @@ def buildLivePhotoMap(files, resumeRows, args):
             if len(images) == 1 and len(videos) == 1:
                 pairId = identifiers[pathKey(images[0])]
                 addLivePhotoPair(livePhotoMap, livePhotoIds, images[0], videos[0], pairId)
+            elif len(videos) == 0:
+                for image in images:
+                    incompleteLivePhotoIds[pathKey(image)] = identifiers[pathKey(image)]
 
     # Restore a pair when one half was already moved during an earlier run.
     for row in resumeRows:
@@ -754,10 +759,12 @@ def buildLivePhotoMap(files, resumeRows, args):
 
         if isLivePhotoImage(source) and pairedSource.suffix.lower() in LIVE_PHOTO_VIDEO_EXTS:
             addLivePhotoPair(livePhotoMap, livePhotoIds, source, pairedSource, pairId)
+            incompleteLivePhotoIds.pop(pathKey(source), None)
         elif isLivePhotoImage(pairedSource) and source.suffix.lower() in LIVE_PHOTO_VIDEO_EXTS:
             addLivePhotoPair(livePhotoMap, livePhotoIds, pairedSource, source, pairId)
+            incompleteLivePhotoIds.pop(pathKey(pairedSource), None)
 
-    return livePhotoMap, livePhotoIds
+    return livePhotoMap, livePhotoIds, incompleteLivePhotoIds
 
 
 def buildLivePhotoDateMap(livePhotoMap, sidecarMap, resumeRows, args):
@@ -997,7 +1004,7 @@ def incDateSource(stats, mediaType, dateSource):
             stats.inc("windows_videos")
 
 
-def processOne(path, srcRoot, dest, args, stats, sidecarMap, livePhotoMap, livePhotoIds, livePhotoDates, livePhotoDestinations, pendingDestinations):
+def processOne(path, srcRoot, dest, args, stats, sidecarMap, livePhotoMap, livePhotoIds, incompleteLivePhotoIds, livePhotoDates, livePhotoDestinations, pendingDestinations):
     if stopEvent.is_set():
         return
 
@@ -1028,6 +1035,9 @@ def processOne(path, srcRoot, dest, args, stats, sidecarMap, livePhotoMap, liveP
             pairType = "live_photo"
             pairId = livePhotoIds.get(pathKey(path), "")
             pairedSource = livePhotoPair[1] if pathKey(path) == pathKey(livePhotoPair[0]) else livePhotoPair[0]
+        elif pathKey(path) in incompleteLivePhotoIds:
+            pairType = "live_photo_incomplete"
+            pairId = incompleteLivePhotoIds[pathKey(path)]
 
         if pathKey(path) in livePhotoDates:
             dateValue, dateOffset, dateSource = livePhotoDates[pathKey(path)]
@@ -1136,7 +1146,7 @@ def processOne(path, srcRoot, dest, args, stats, sidecarMap, livePhotoMap, liveP
 
 def renameMedia(src, dest, args, resumeCompletedSources, resumeRows, stats):
     files = list(iterFiles(src, args.recursive, inputTxt=args.input_txt, printLock=printLock))
-    livePhotoMap, livePhotoIds = buildLivePhotoMap(files, resumeRows, args)
+    livePhotoMap, livePhotoIds, incompleteLivePhotoIds = buildLivePhotoMap(files, resumeRows, args)
     sidecarMap, associatedSidecars = buildSidecarMap(files, livePhotoMap=livePhotoMap)
     livePhotoDates = buildLivePhotoDateMap(livePhotoMap, sidecarMap, resumeRows, args)
     livePhotoDestinations = buildResumedLivePhotoDestinations(livePhotoMap, resumeRows)
@@ -1148,6 +1158,12 @@ def renameMedia(src, dest, args, resumeCompletedSources, resumeRows, stats):
 
         with printLock:
             print(f"Live Photo pairs detected: {len(livePhotoPairs)}")
+
+    if incompleteLivePhotoIds:
+        stats.inc("incomplete_live_photos", len(incompleteLivePhotoIds))
+
+        with printLock:
+            print(f"Incomplete Live Photos detected: {len(incompleteLivePhotoIds)}")
 
     resumeRowBySource = rowsBySource(resumeRows)
     retrySidecarsForCompletedMedia(files, sidecarMap, resumeCompletedSources, resumeRowBySource, args, stats)
@@ -1187,6 +1203,7 @@ def renameMedia(src, dest, args, resumeCompletedSources, resumeRows, stats):
             sidecarMap,
             livePhotoMap,
             livePhotoIds,
+            incompleteLivePhotoIds,
             livePhotoDates,
             livePhotoDestinations,
             pendingDestinations,

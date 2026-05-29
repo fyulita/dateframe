@@ -388,6 +388,10 @@ with ExifTool from eligible image files (`.heic`, `.jpg`, `.jpeg`) and `.mov`
 videos. A pair is recognized only when exactly one image and exactly one video
 share the identifier.
 
+If an image contains an Apple pair identifier but no matching `.MOV` is found,
+the image is still processed normally and the CSV records
+`pair_type=live_photo_incomplete` with the detected `pair_id`.
+
 The pair receives one common timestamp name:
 
 ```text
