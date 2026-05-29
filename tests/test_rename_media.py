@@ -188,6 +188,37 @@ def testRenameMediaKeepsLivePhotoPairOnImageDate(tmp_path, monkeypatch):
     assert stats.summary()["live_photo_pairs"] == 1
 
 
+def testRenameMediaReportsIncompleteLivePhotoImage(tmp_path, monkeypatch):
+    src = tmp_path / "src"
+    dest = tmp_path / "dest"
+    src.mkdir()
+    dest.mkdir()
+    image = src / "IMG_0001.HEIC"
+    image.write_bytes(b"live photo image")
+
+    monkeypatch.setattr(
+        rename_media,
+        "readLivePhotoIdentifiers",
+        lambda paths, args: {pathKey(image): "PAIR-1"},
+    )
+    monkeypatch.setattr(
+        rename_media,
+        "imageDate",
+        lambda path, useWindows: ("2026-03-02T10-20-30", "wand:exif:DateTimeOriginal"),
+    )
+
+    stats = rename_media.Stats()
+    rename_media.renameMedia(src, dest, renameArgs(), set(), [], stats)
+
+    assert (dest / "2026-03-02T10-20-30.HEIC").exists()
+    row = stats.getCsvRows()[0]
+    assert row["pair_type"] == "live_photo_incomplete"
+    assert row["pair_id"] == "PAIR-1"
+    assert row["paired_source"] == ""
+    assert row["processed_ok"] is True
+    assert stats.summary()["incomplete_live_photos"] == 1
+
+
 def testLivePhotoIdentifierAcceptsAppleAndQuickTimeExiftoolGroups():
     assert rename_media.livePhotoIdentifierFromMetadata(
         {"MakerNotes:ContentIdentifier": "PAIR-1"},
@@ -328,7 +359,11 @@ def testRenameMediaDoesNotPairSameStemMovWithoutMatchingIdentifier(tmp_path, mon
 
     assert (dest / "2026-03-02T10-20-30.JPG").exists()
     assert (dest / "2026-03-02T10-20-33.MOV").exists()
-    assert all(not row["pair_type"] for row in stats.getCsvRows())
+    rows = {row["source"]: row for row in stats.getCsvRows()}
+    assert rows[str(image)]["pair_type"] == "live_photo_incomplete"
+    assert rows[str(image)]["pair_id"] == "IMAGE-ID"
+    assert rows[str(video)]["pair_type"] == ""
+    assert stats.summary()["incomplete_live_photos"] == 1
 
 
 def testRenameMediaDoesNotPairVideoThumbnailAsLivePhoto(tmp_path, monkeypatch):
