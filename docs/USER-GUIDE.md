@@ -635,8 +635,8 @@ is a capture date:
 | --- | --- |
 | EXIF `DateTimeOriginal` | Usually a strong photo capture-date source |
 | QuickTime creation metadata | Often useful for video capture, but timezone interpretation may matter |
-| Wand `date:create` / `date:modify` | May be filesystem date metadata, often displayed with UTC offset |
-| Windows Modified Date | Local filesystem modification timestamp, not automatically a capture date |
+| Wand `date:create` / `date:modify` | Raw ImageMagick properties that may be filesystem date metadata, often displayed with UTC offset |
+| Windows Modified Date | Local filesystem modification timestamp displayed in local time, not embedded capture metadata |
 | Sidecar selected date | DateFrame's parsed date from a supported XMP/XML companion |
 
 Use this command to diagnose which date sources exist before choosing a repair

@@ -1,4 +1,5 @@
 import time
+import datetime
 from types import SimpleNamespace
 
 import pytest
@@ -56,3 +57,17 @@ def testDefaultReadersMatchMediaType(tmp_path, monkeypatch):
 
 def testExplicitReaderCanInspectUnusualMediaType(tmp_path):
     assert enabledReaderNames(inspectArgs(wand=True), tmp_path / "video.mp4") == ["useWand"]
+
+
+def testWindowsReaderLabelsFilesystemTime(tmp_path, monkeypatch, capsys):
+    media = tmp_path / "image.jpg"
+    media.touch()
+    timestamp = datetime.datetime(2026, 3, 2, 10, 20, 30).timestamp()
+
+    monkeypatch.setattr(read_metadata.os.path, "getmtime", lambda path: timestamp)
+
+    read_metadata.useWindows(media)
+
+    output = capsys.readouterr().out
+    assert "Windows Modified Date (local filesystem time, not embedded capture metadata)" in output
+    assert "2026-03-02 10:20:30" in output
